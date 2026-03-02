@@ -1,0 +1,1 @@
+let t="https://media.flespi.io";function r(e){e&&(t=e)}function n(e,i){if(!i)return e;const a=e.includes("?")?"&":"?";return`${e}${a}${i}`}function s(e,i){return n(`${t}/${e.uuid}`,i)}function u(e,i){return n(`${t}/${e.uuid}`,i)}function f(e){return(e.mediastream||e.stream_type)==="flv"?"video/x-flv":"application/x-mpegURL"}export{u as a,f as b,s as m,r as s};
