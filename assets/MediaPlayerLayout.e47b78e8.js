@@ -1,0 +1,1 @@
+import{Q as t,a as r}from"./QLayout.1f06a294.js";import{_ as n,d as s,p as c,q as p,t as _,u as e,f as a}from"./index.3fad7c49.js";const i=s({name:"MediaPlayerLayout"});function u(f,l,d,m,v,y){const o=c("router-view");return p(),_(t,{view:"lHh Lpr lFf"},{default:e(()=>[a(r,null,{default:e(()=>[a(o)]),_:1})]),_:1})}var C=n(i,[["render",u]]);export{C as default};
