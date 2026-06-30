@@ -7,6 +7,8 @@ media files (photos, videos, live streams, tachograph files) from
 MediaBox connects to the flespi platform over its REST API and MQTT WebSockets,
 so device media, upload notifications and command results update in real time.
 
+![MediaBox UI](docs/screenshots/ui.png)
+
 ## Features
 
 - 📂 **Media explorer** per device — browse photos and videos in grid or list view
