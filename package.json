@@ -1,6 +1,6 @@
 {
   "name": "mediabox",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Vue 3 + Quasar web app for viewing and managing media files from flespi IoT devices",
   "productName": "MediaBox",
   "author": "Evgenij Spitsyn <spev@gurtam.com>",

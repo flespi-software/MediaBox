@@ -78,7 +78,9 @@ export const useMediaStore = defineStore('media', {
       } else if (year && month) {
         const date = new Date(year, month - 1)
         this.from = new Date(date.getFullYear(), date.getMonth(), 1).getTime() / 1000
-        this.to = new Date(date.getFullYear(), date.getMonth() + 1, 0).getTime() / 1000
+        // exclusive upper bound = start of next month, so files on the last day
+        // of the month are included (was `day 0` = last day 00:00, which dropped them)
+        this.to = new Date(date.getFullYear(), date.getMonth() + 1, 1).getTime() / 1000
         this.getMedia()
       }
     },
