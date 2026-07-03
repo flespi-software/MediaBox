@@ -288,7 +288,7 @@
     </transition>
 
     <transition name="mb-fade">
-      <StreamWall v-if="showwall" :streams="activeStreams" class="absolute-full" style="z-index: 2100"
+      <StreamWall v-if="showwall" :streams="activeStreams" :device="item" class="absolute-full" style="z-index: 2100"
         @close="showwall = false" @stop="stopStream" @embed="embed" />
     </transition>
 
@@ -617,7 +617,8 @@ export default {
       this.wallFocus = null
       this.wallTime = null
       this.wallAutoplay = false
-      this.wallZoom = null
+      // open at the same zoom the explorer timeline currently has (if zoomed)
+      this.wallZoom = this.zoomRange ? { ...this.zoomRange } : null
       this.showcamerawall = true
     },
     viewerNav (dir) {

@@ -37,6 +37,7 @@
     "flespi-io-js": "git+https://github.com/flespi-software/flespi-io-js.git#v3",
     "form-data": "^4.0.0",
     "git-directory-deploy": "^1.5.1",
+    "leaflet": "^1.9.4",
     "lodash": "^4.17.21",
     "moment": "^2.29.4",
     "mpegts.js": "^1.8.0",

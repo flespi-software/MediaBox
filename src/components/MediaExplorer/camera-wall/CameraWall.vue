@@ -1,24 +1,40 @@
 <template>
-  <div class="cw column bg-black">
-    <div class="cw-header row items-center no-wrap q-px-md">
+  <WallShell @close="$emit('close')">
+    <template #header-left>
       <q-icon name="mdi-view-grid-plus" color="teal-4" size="22px" class="q-mr-sm" />
       <div class="text-white text-subtitle1">Camera wall</div>
       <q-badge v-if="channels.length" color="teal-7" class="q-ml-sm">{{ channels.length }} ch</q-badge>
       <div class="text-caption text-blue-grey-4 q-ml-md">{{ date }}</div>
-      <q-space />
+    </template>
+    <template #header-right>
       <q-btn flat round dense :color="showPreviews ? 'teal-4' : 'white'"
         :icon="showPreviews ? 'mdi-image-multiple' : 'mdi-image-multiple-outline'"
         @click="showPreviews = !showPreviews">
         <q-tooltip>{{ showPreviews ? 'Hide previews' : 'Show previews' }}</q-tooltip>
       </q-btn>
-      <q-btn flat round dense icon="mdi-close" color="white" @click="$emit('close')">
-        <q-tooltip>Close</q-tooltip>
+      <q-btn flat round dense :color="showTrack ? 'teal-4' : 'white'" icon="mdi-map-marker-path"
+        @click="toggleTrack">
+        <q-tooltip>{{ showTrack ? 'Hide device track' : 'Show device track' }}</q-tooltip>
       </q-btn>
-    </div>
+    </template>
 
-    <div class="cw-body col">
-      <CameraGrid :channels="channels" :lanes="lanes" :t="t" :playing="playing" :rate="rate"
-        :initial-focus="initialFocus" @focus-change="focusedChannel = $event" />
+    <div class="cw-body row no-wrap col">
+      <WallGrid class="col" :items="channels" :get-key="(ch) => ch" v-model:focus="focusedChannel">
+        <template #empty>
+          <div class="column flex-center text-grey-6" style="height:100%">
+            <q-icon name="mdi-video-off-outline" size="64px" style="opacity:.45" class="q-mb-md" />
+            <div class="text-subtitle1 text-grey-5">No video or image channels for this day</div>
+          </div>
+        </template>
+        <template #default="{ item, focused, toggleFocus }">
+          <CameraCell :channel="item" :segments="lanes[item]" :t="t" :playing="playing" :rate="rate"
+            :focused="focused" :audio-on="audioChannel === item"
+            @toggle-focus="toggleFocus" @toggle-audio="toggleAudio(item)" />
+        </template>
+      </WallGrid>
+      <TrackMap v-if="showTrack" class="cw-track" :t="t" :track="track" :loading="trackLoading"
+        :playing="playing" :range-from="boundStart" :range-to="boundEnd" :coverage="videoCoverage"
+        :position="livePosition" @seek="onSeek" @seek-play="onSeekPlay" />
     </div>
 
     <MediaTimeline ref="wallTimeline" class="cw-timeline" :device="device" :intervals="wallEvents" :date="date"
@@ -30,22 +46,31 @@
     <CameraControls :playing="playing" :rate="rate" :skip-gaps="skipGaps" :t="t"
       @toggle-play="toggle" @set-rate="setRate" @toggle-skip="v => skipGaps = v"
       @prev="gotoClip(-1)" @next="gotoClip(1)" />
-  </div>
+  </WallShell>
 </template>
 
 <script>
-import { defineComponent, computed, watch } from 'vue'
+import { defineComponent, defineAsyncComponent, computed, watch } from 'vue'
+import { LocalStorage } from 'quasar'
 import throttle from 'lodash/throttle'
+
+const TRACK_PREF = 'mediabox.cameraWall.showTrack'
 import { fileKind } from '../../../utils/file-type'
 import { useMasterClock } from '../../../composables/useMasterClock'
 import { buildCameraModel } from '../../../composables/useCameraChannels'
-import CameraGrid from './CameraGrid.vue'
+import { useLivePosition } from '../../../composables/useLivePosition'
+import WallShell from '../wall/WallShell.vue'
+import WallGrid from '../wall/WallGrid.vue'
+import CameraCell from './CameraCell.vue'
 import MediaTimeline from '../timeline/timeline.vue'
 import CameraControls from './CameraControls.vue'
 
+// the map (with leaflet) loads only when the track is shown
+const TrackMap = defineAsyncComponent(() => import('../wall/TrackMap.vue'))
+
 export default defineComponent({
   name: 'CameraWall',
-  components: { CameraGrid, MediaTimeline, CameraControls },
+  components: { WallShell, WallGrid, CameraCell, MediaTimeline, CameraControls, TrackMap },
   props: {
     device: { type: Object, default: () => ({}) },
     events: { type: Array, default: () => [] },
@@ -67,6 +92,10 @@ export default defineComponent({
     const clock = useMasterClock({ dayStart, dayEnd })
     const model = computed(() => buildCameraModel(props.events, { dayStart, dayEnd }))
 
+    // realtime "now" marker, only for today
+    const nowSec = Date.now() / 1000
+    const livePosition = useLivePosition(props.device.id, nowSec >= dayStart && nowSec < dayEnd)
+
     // skip-gaps: while playing, if every channel is empty at t, jump to the next
     // segment start (or pause if none remain). Throttled so it rides the clock.
     const skipCheck = throttle(() => {
@@ -82,14 +111,23 @@ export default defineComponent({
 
     watch(clock.t, () => { skipCheck() })
 
-    return { dayStart, dayEnd, model, ...clock, skipCheck }
+    return { dayStart, dayEnd, model, ...clock, skipCheck, livePosition }
   },
   data () {
+    // track panel is open by default; remember if the user closes it
+    const pref = LocalStorage.getItem(TRACK_PREF)
+    // when opened from a specific file, start with that channel expanded + audible
+    const focus = this.initialFocus != null ? String(this.initialFocus) : null
     return {
       skipGaps: true,
       showPreviews: false,
-      focusedChannel: null,
-      wasPlayingBeforeScrub: false
+      focusedChannel: focus,
+      audioChannel: focus, // exactly one cell plays sound; follows the expanded one
+      wasPlayingBeforeScrub: false,
+      showTrack: pref === null ? true : pref,
+      track: [],
+      trackLoading: false,
+      trackLoaded: false
     }
   },
   computed: {
@@ -101,11 +139,31 @@ export default defineComponent({
         const k = fileKind(f)
         return k === 'video' || k === 'image'
       })
+    },
+    // merged time ranges where any channel has video - used to highlight the
+    // matching stretches of the map track (and make them clickable to play)
+    videoCoverage () {
+      const ivs = []
+      this.channels.forEach((ch) => {
+        (this.lanes[ch] || []).forEach((s) => {
+          if (s.kind === 'video') ivs.push([s.start, s.end])
+        })
+      })
+      ivs.sort((a, b) => a[0] - b[0])
+      const merged = []
+      ivs.forEach(([a, b]) => {
+        const last = merged[merged.length - 1]
+        if (last && a <= last[1]) last[1] = Math.max(last[1], b)
+        else merged.push([a, b])
+      })
+      return merged.map(([from, to]) => ({ from, to }))
     }
   },
   watch: {
     // keep the skip-gaps guard in sync with the toggle: re-run the check when re-enabled
-    skipGaps (on) { if (on) this.skipCheck() }
+    skipGaps (on) { if (on) this.skipCheck() },
+    // expand a channel -> it gets the sound; collapse to grid -> silence
+    focusedChannel (val) { this.audioChannel = val }
   },
   mounted () {
     // frame + loop playback to the opened clip's range, if given
@@ -118,12 +176,51 @@ export default defineComponent({
       if (first != null) this.seek(first)
     }
     if (this.autoplay) this.play()
+    if (this.showTrack && !this.trackLoaded) this.fetchTrack()
   },
   beforeUnmount () {
     if (this.skipCheck) this.skipCheck.cancel()
     this.dispose()
   },
   methods: {
+    // solo audio: unmute this channel (mute the rest); press again to mute it too
+    toggleAudio (ch) {
+      this.audioChannel = this.audioChannel === ch ? null : ch
+    },
+    toggleTrack () {
+      this.showTrack = !this.showTrack
+      LocalStorage.set(TRACK_PREF, this.showTrack)
+      if (this.showTrack && !this.trackLoaded) this.fetchTrack()
+    },
+    // load the device's GPS messages for the day and normalize them into a track
+    async fetchTrack () {
+      this.trackLoading = true
+      const fields = 'timestamp,position.latitude,position.longitude,position.speed,position.direction,position.altitude'
+      const data = encodeURIComponent(JSON.stringify({ from: this.dayStart, to: this.dayEnd, fields }))
+      let res
+      try {
+        res = await this.$connector.http.get(`gw/devices/${this.device.id}/messages?data=${data}`)
+      } catch (e) {
+        console.error('Failed to load device track', e)
+        this.trackLoading = false
+        this.trackLoaded = true
+        return
+      }
+      const rows = (res && res.data && res.data.result) || []
+      this.track = rows
+        .filter((m) => m['position.latitude'] != null && m['position.longitude'] != null)
+        .map((m) => ({
+          t: m.timestamp,
+          lat: m['position.latitude'],
+          lng: m['position.longitude'],
+          speed: m['position.speed'],
+          dir: m['position.direction'],
+          alt: m['position.altitude']
+        }))
+        .sort((a, b) => a.t - b.t)
+      this.trackLoading = false
+      this.trackLoaded = true
+    },
     firstContentStart () {
       let min = null
       this.channels.forEach((ch) => {
@@ -134,6 +231,12 @@ export default defineComponent({
     },
     onSeek (t) {
       this.seek(t)
+      if (this.skipGaps) this.skipCheck()
+    },
+    // clicking a video stretch on the map: jump there and start playing
+    onSeekPlay (t) {
+      this.seek(t)
+      if (!this.playing) this.play()
       if (this.skipGaps) this.skipCheck()
     },
     onScrubStart () {
@@ -157,11 +260,12 @@ export default defineComponent({
         : this.model.prevClipStart(this.t, this.focusedChannel)
       if (target != null) this.seek(target)
     },
-    // zoom range selected on the timeline → loop playback within it (null = reset)
+    // zoom range selected on the timeline -> loop playback within it (null = reset)
     onZoomChange (range) {
       if (range) {
+        // setRange keeps the playhead if it's already inside the zoom, and only
+        // jumps to the start when it fell outside the selected range
         this.setRange(range.from, range.to, true)
-        this.seek(range.from)
       } else {
         this.resetRange()
       }
@@ -171,21 +275,14 @@ export default defineComponent({
 </script>
 
 <style lang="sass" scoped>
-.cw
-  // anchor to the viewport (not the containerized q-layout, which is ~10px wider
-  // than the viewport and would push content off the right edge)
-  position: fixed
-  inset: 0
-  height: 100%
-  width: 100%
-
-.cw-header
-  height: 48px
-  flex: 0 0 auto
-  border-bottom: 1px solid rgba(255, 255, 255, .08)
-
 .cw-body
   overflow: hidden
+
+.cw-track
+  flex: 0 0 40%
+  max-width: 560px
+  min-width: 300px
+  border-left: 1px solid rgba(255, 255, 255, .08)
 
 .cw-timeline
   flex: 0 0 auto

@@ -8,19 +8,14 @@
       <div class="text-caption text-grey-8 q-mt-xs">no data</div>
     </div>
 
-    <div class="cc-overlay row items-center no-wrap">
-      <span class="cc-label ellipsis">{{ label }}</span>
-      <q-space />
-      <q-btn v-if="videoOptions" flat round dense size="sm" :color="audioOn ? 'teal-4' : 'white'"
-        :icon="audioOn ? 'mdi-volume-high' : 'mdi-volume-off'" @click.stop="$emit('toggle-audio')">
-        <q-tooltip>{{ audioOn ? 'Mute' : 'Play sound (mutes the others)' }}</q-tooltip>
-      </q-btn>
-      <q-btn flat round dense size="sm" color="white"
-        :icon="focused ? 'mdi-arrow-collapse' : 'mdi-arrow-expand'"
-        @click.stop="$emit('toggle-focus')">
-        <q-tooltip>{{ focused ? 'Back to grid' : 'Expand' }}</q-tooltip>
-      </q-btn>
-    </div>
+    <WallOverlay :label="label" :focused="focused" @toggle-focus="$emit('toggle-focus')">
+      <template #actions>
+        <q-btn v-if="videoOptions" flat round dense size="sm" :color="audioOn ? 'teal-4' : 'white'"
+          :icon="audioOn ? 'mdi-volume-high' : 'mdi-volume-off'" @click.stop="$emit('toggle-audio')">
+          <q-tooltip>{{ audioOn ? 'Mute' : 'Play sound (mutes the others)' }}</q-tooltip>
+        </q-btn>
+      </template>
+    </WallOverlay>
   </div>
 </template>
 
@@ -28,6 +23,7 @@
 import { defineComponent } from 'vue'
 import throttle from 'lodash/throttle'
 import MediaPlayer from '../player/player.vue'
+import WallOverlay from '../wall/WallOverlay.vue'
 import { mediaFileUrl } from '../../../utils/media-url'
 
 const DRIFT = 0.3 // seconds of tolerated drift before we seek to correct
@@ -35,7 +31,7 @@ const CORRECT_MS = 250 // ~4 Hz correction/boundary-check rate
 
 export default defineComponent({
   name: 'CameraCell',
-  components: { MediaPlayer },
+  components: { MediaPlayer, WallOverlay },
   props: {
     channel: { type: [String, Number], required: true },
     // resolved, non-overlapping segment lane for this channel
@@ -73,7 +69,7 @@ export default defineComponent({
       this.applyMute()
     },
     segments () {
-      // lane changed (new data / date) — force a clean resolve
+      // lane changed (new data / date) - force a clean resolve
       this.currentUuid = null
       this.syncNow()
     }
@@ -134,7 +130,7 @@ export default defineComponent({
         }
         return
       }
-      // same file still active — correct video drift
+      // same file still active - correct video drift
       if (seg.kind === 'video') this.correctVideo(seg)
     },
     correctVideo (seg) {
@@ -197,32 +193,4 @@ export default defineComponent({
   width: 100%
   height: 100%
   background: #000
-
-.cc-overlay
-  position: absolute
-  left: 0
-  right: 0
-  top: 0
-  padding: 4px 6px 14px
-  background: linear-gradient(rgba(0, 0, 0, .6), rgba(0, 0, 0, 0))
-  opacity: 0
-  transition: opacity .15s ease
-  pointer-events: none
-  .q-btn
-    pointer-events: auto
-
-// pointer devices: reveal the overlay (CH label + expand button) on hover
-@media (hover: hover)
-  .cc-cell:hover .cc-overlay
-    opacity: 1
-
-// touch devices have no hover, so keep the controls visible at all times
-@media (hover: none)
-  .cc-overlay
-    opacity: 1
-
-.cc-label
-  color: #fff
-  font-size: 12px
-  font-weight: 600
 </style>
