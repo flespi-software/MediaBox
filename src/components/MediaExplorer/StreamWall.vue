@@ -180,8 +180,14 @@ export default defineComponent({
     .q-btn
       pointer-events: auto
 
-  .sw-tile:hover .sw-overlay
-    opacity: 1
+  // pointer devices reveal controls on hover; touch devices have no hover so
+  // the overlay controls stay visible at all times
+  @media (hover: hover)
+    .sw-tile:hover .sw-overlay
+      opacity: 1
+  @media (hover: none)
+    .sw-overlay
+      opacity: 1
 
   // app-level expand: hide the rest, promote the focused tile to fill the wall
   .sw-tile-hidden

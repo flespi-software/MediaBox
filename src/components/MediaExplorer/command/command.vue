@@ -28,8 +28,12 @@
         <q-input v-model.number="ttl" label="TTL" dark dense suffix="sec." style="width:110px"
           hide-bottom-space :error="ttl>2592000 || ttl<60" /><q-space />
         <q-btn flat no-caps label="Cancel" color="blue-grey-3" v-close-popup />
+        <q-btn outline no-caps :disabled="formError" :loading="blocksend" label="Send &amp; continue"
+          color="teal-4" icon="mdi-send-outline" @click="sendRequest(true)">
+          <q-tooltip>Send and keep the dialog open to send another command</q-tooltip>
+        </q-btn>
         <q-btn unelevated no-caps :disabled="formError" :loading="blocksend" label="Send"
-          color="teal-6" icon="mdi-send" @click="() => { this.sendRequest() }" />
+          color="teal-6" icon="mdi-send" @click="sendRequest(false)" />
       </q-card-actions>
     </q-card>
   </q-dialog>
@@ -142,10 +146,11 @@ export default {
       }
     },
 
-    async sendRequest () {
+    // keepOpen=true queues the command but leaves the dialog (and its current
+    // form values) open, so the user can tweak settings and send another
+    async sendRequest (keepOpen = false) {
       this.blocksend = true
       const that = this
-      // console.log(this.data)
       const addr = '/gw/devices/' + this.deviceId + '/commands-queue'
       const data = [{ name: this.command.name, properties: that.data, ttl: that.ttl || 600 }]
 
@@ -158,17 +163,13 @@ export default {
         }
       }
       if (response.data.result && response.data.result[0]) {
-        // console.log(response.data.result[0])
         that.$q.notify('Successfully added to queue')
         if (this.cb) {
           this.cb(response.data.result[0].id)
         }
-        this.close()
+        if (!keepOpen) this.close()
       }
       this.blocksend = false
-
-      // this.onError(response)
-      // this.$emit('close')
     }
   },
   mounted () {

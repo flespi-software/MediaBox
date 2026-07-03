@@ -97,6 +97,7 @@ function buildOptions (options) {
 
 export default {
   name: 'VideoPlayer',
+  emits: ['ready'],
   props: {
     options: {
       type: Object,
@@ -139,6 +140,7 @@ export default {
       const live = isLiveSource(this.options)
       this.player = videojs(el, opts, () => {
         this.player.log('onPlayerReady', this)
+        this.$emit('ready')
         if (live) {
           this.startLatencyChaser()
           this.player.on('waiting', () => {
@@ -252,6 +254,31 @@ export default {
     },
     pause () {
       if (this.player) this.player.pause()
+    },
+    // --- imperative helpers for external (synchronized) time control ---
+    // Additive only; used by the camera wall to drive recorded
+    // playback. Recorded mp4 is never a live source, so the latency chaser
+    // above never runs and these do not affect live-stream behavior.
+    seek (t) {
+      if (this.player) this.player.currentTime(t)
+    },
+    getCurrentTime () {
+      return this.player ? this.player.currentTime() : 0
+    },
+    getDuration () {
+      return this.player ? this.player.duration() : 0
+    },
+    isPaused () {
+      return this.player ? this.player.paused() : true
+    },
+    setRate (r) {
+      if (this.player) this.player.playbackRate(r)
+    },
+    setMuted (m) {
+      if (this.player) this.player.muted(m)
+    },
+    isReady () {
+      return !!this.player
     }
   }
 }

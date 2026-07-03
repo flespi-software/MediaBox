@@ -18,21 +18,14 @@
             <q-tooltip>Grid view</q-tooltip>
           </template>
         </q-btn-toggle>
-        <div class="mb-action-bar row items-center no-wrap q-ml-md" :class="{ 'mb-labels': $q.screen.gt.sm }"
-          v-if="cmdphoto || cmdvideo || cmdstream || cmdplayback || cmdtimeline || tachoEnabled">
-          <q-btn class="mb-action-btn mb-act-photo" flat dense no-caps icon="mdi-camera"
-            :label="$q.screen.gt.sm ? 'Photo' : ''" title="Take a photo" v-if="cmdphoto" @click="takePhoto({})" />
-          <q-btn class="mb-action-btn mb-act-video" flat dense no-caps icon="mdi-video"
-            :label="$q.screen.gt.sm ? 'Video' : ''" title="Request video" v-if="cmdvideo" @click="getPlayback({}, selectedDate)" />
-          <q-btn class="mb-action-btn mb-act-stream" flat dense no-caps icon="mdi-video-wireless"
-            :label="$q.screen.gt.sm ? 'Live' : ''" title="Start stream" v-if="cmdstream" @click="startStream({})" />
-          <q-btn class="mb-action-btn mb-act-playback" flat dense no-caps icon="mdi-history"
-            :label="$q.screen.gt.sm ? 'Playback' : ''" title="Playback" v-if="cmdplayback" @click="playbackVideo({})" />
-          <q-btn class="mb-action-btn mb-act-timeline" flat dense no-caps icon="mdi-chart-timeline"
-            :label="$q.screen.gt.sm ? 'Timeline' : ''" title="Request timeline" v-if="cmdtimeline" @click="getTimeline({})" />
-          <div class="mb-action-divider" v-if="tachoEnabled && (cmdphoto || cmdvideo || cmdstream || cmdplayback || cmdtimeline)" />
-          <q-btn class="mb-action-btn mb-act-tacho" flat dense no-caps icon="mdi-smart-card-reader"
-            :label="$q.screen.gt.sm ? 'Tacho' : ''" title="Request tachograph file" v-if="tachoEnabled" @click="getTacho({})" />
+        <!-- wide screens: commands inline; narrow screens use the second row below -->
+        <div class="mb-action-bar row items-center no-wrap q-ml-md mb-labels"
+          v-if="commandActions.length && $q.screen.gt.sm">
+          <template v-for="(a, i) in commandActions" :key="a.key">
+            <div class="mb-action-divider" v-if="a.divider && i > 0" />
+            <q-btn class="mb-action-btn" :class="a.cls" flat dense no-caps :icon="a.icon"
+              :label="a.label" :title="a.title" @click="a.fn" />
+          </template>
         </div>
         <q-btn class="mb-icon-btn q-ml-sm" flat dense round icon="mdi-upload" title="Upload media file"
           @click="$refs.uploadmedia.open(item.id)" />
@@ -44,6 +37,10 @@
               @navigation="monthChange" />
           </q-menu>
         </q-btn>
+        <q-btn v-if="hasCameraChannels" icon="mdi-view-grid-plus" color="teal-4" flat round
+          @click="openCameraWall" title="Camera wall">
+          <q-tooltip>Camera wall — synchronized multi-channel playback</q-tooltip>
+        </q-btn>
         <q-btn v-if="streamscount" icon="mdi-monitor-multiple" color="green-4" flat round
           @click="showwall = true" title="Live streams wall">
           <q-badge color="red" floating>{{ streamscount }}</q-badge>
@@ -52,6 +49,17 @@
           <q-tooltip>Activity — connections, requests &amp; uploads</q-tooltip>
         </q-btn>
       </q-toolbar>
+      <!-- second toolbar row for device commands on narrow screens (they don't
+           fit in the main toolbar); wraps to more lines if still too narrow -->
+      <div v-if="commandActions.length && !$q.screen.gt.sm" class="mb-commands-row row justify-center q-px-sm q-pb-xs">
+        <div class="mb-action-bar row items-center mb-labels mb-action-wrap">
+          <template v-for="(a, i) in commandActions" :key="a.key">
+            <div class="mb-action-divider" v-if="a.divider && i > 0" />
+            <q-btn class="mb-action-btn" :class="a.cls" flat dense no-caps :icon="a.icon"
+              :label="a.label" :title="a.title" @click="a.fn" />
+          </template>
+        </div>
+      </div>
     </q-header>
     <q-drawer side="right" v-model="activityOpen" bordered :width="300" :breakpoint="599"
       :behavior="$q.screen.lt.md ? 'mobile' : 'desktop'" content-class="mb-drawer">
@@ -74,10 +82,7 @@
           </div>
           <q-list>
             <q-item v-for="(itm, index) in realtimeList" :key="index" clickable @click="() => {
-              (playing = false),
-                (current = itm),
-                (showmedia = true),
-                setSelectedDate(itm.__event.date);
+              setSelectedDate(itm.__event.date), openMedia(itm);
             }
             ">
               <q-item-section avatar>
@@ -130,7 +135,7 @@
             <div class="text-caption q-mt-xs text-grey-7">Pick another date, or request data from the device above</div>
           </div>
           <q-table v-else :grid="fileviewtype === 'grid'" class="filemanager"
-            :style="`height: ${(height || 400) - mainTimelineSize.height - 50 - 8}px;`" :rows="currentEvents"
+            :style="`height: ${(height || 400) - mainTimelineSize.height - 50 - 8}px;`" :rows="visibleEvents"
             :columns="columns" :visible-columns="visibleColumns" row-key="uuid" virtual-scroll v-model:pagination="pagination"
             :rows-per-page-options="[0]" dense card-container-class="content-start" @row-click="rowClick">
             <template v-slot:body-cell-preview="props">
@@ -183,19 +188,18 @@
             <template v-slot:item="props">
               <div class="q-pa-xs col-xs-6 col-sm-4 col-md-3 col-lg-2 col-xl-2">
                 <MediaItem :media="props.row" :item="item" @embed="embed"
-                  :highlighted="current && current.uuid === props.row.uuid" @click="(mediaitem) => {
-                    (playing = false), (current = props.row), (showmedia = true);
-                  }
-                  " style="margin: 0 auto" />
+                  :highlighted="current && current.uuid === props.row.uuid"
+                  @click="() => openMedia(props.row)" style="margin: 0 auto" />
               </div>
             </template>
           </q-table>
         </template>
       </q-page>
-      <q-footer class="mb-footer q-pt-sm q-px-sm">
-        <MediaTimeline v-if="selectedDate" :device="item" :intervals="currentEvents" :timeline="timelines"
+      <q-footer class="mb-footer q-pt-sm">
+        <MediaTimeline v-if="selectedDate" class="mb-flush-timeline" :device="item" :intervals="currentEvents" :timeline="timelines"
           :date="selectedDate" @itemClick="itemClick" :current="current" @requestPlayback="getPlaybackByTimeline"
-          :nopreviews="true" @resizeTimeline="mainTimelineResize" @embed="(uuid) => $emit('embed', uuid)" />
+          :nopreviews="true" zoomable @zoom-change="onExplorerZoom"
+          @resizeTimeline="mainTimelineResize" @embed="(uuid) => $emit('embed', uuid)" />
       </q-footer>
     </q-page-container>
 
@@ -287,6 +291,12 @@
       <StreamWall v-if="showwall" :streams="activeStreams" class="absolute-full" style="z-index: 2100"
         @close="showwall = false" @stop="stopStream" @embed="embed" />
     </transition>
+
+    <transition name="mb-fade">
+      <CameraWall v-if="showcamerawall" :device="item" :events="currentEvents" :date="selectedDate"
+        :initial-focus="wallFocus" :initial-time="wallTime" :autoplay="wallAutoplay" :initial-zoom="wallZoom"
+        class="absolute-full" style="z-index: 2100" @close="showcamerawall = false" />
+    </transition>
   </q-layout>
 
   <div v-else class="absolute-full column flex-center text-center q-pa-lg" style="background:#14181c">
@@ -320,9 +330,10 @@ import MediaTimeline from '../components/MediaExplorer/timeline/timeline.vue'
 import MediaItem from '../components/MediaExplorer/item.vue'
 import ActivityPanel from '../components/MediaExplorer/ActivityPanel.vue'
 import StreamWall from '../components/MediaExplorer/StreamWall.vue'
+import CameraWall from '../components/MediaExplorer/camera-wall/CameraWall.vue'
 import { mediaFileUrl, streamSrcUrl, streamMimeType } from '../utils/media-url'
 import { isTachographFile, tachoboxUrl } from '../utils/tachograph-url'
-import { fileKindMeta, hasThumbnail, viewerStrategy } from '../utils/file-type'
+import { fileKind, fileKindMeta, hasThumbnail, viewerStrategy } from '../utils/file-type'
 
 export default {
   name: 'MediaExplorer',
@@ -333,6 +344,7 @@ export default {
     MediaItem,
     ActivityPanel,
     StreamWall,
+    CameraWall,
     MediaCommand,
     UploadMedia
   },
@@ -350,6 +362,12 @@ export default {
       current: null,
       showmedia: false,
       showwall: false,
+      showcamerawall: false,
+      wallFocus: null,
+      wallTime: null,
+      wallAutoplay: false,
+      wallZoom: null,
+      zoomRange: null,
       playing: false,
       height: 400,
       contentWidth: 0,
@@ -435,6 +453,35 @@ export default {
         .filter(c => c.meta && c.meta.mediastream)
         .sort((a, b) => (a.established || 0) - (b.established || 0))
     },
+    // device command buttons, built from capability flags — rendered inline on
+    // wide screens and in a second toolbar row on narrow screens
+    commandActions () {
+      const a = []
+      if (this.cmdphoto) a.push({ key: 'photo', cls: 'mb-act-photo', icon: 'mdi-camera', label: 'Photo', title: 'Take a photo', fn: () => this.takePhoto({}) })
+      if (this.cmdvideo) a.push({ key: 'video', cls: 'mb-act-video', icon: 'mdi-video', label: 'Video', title: 'Request video', fn: () => this.getPlayback({}, this.selectedDate) })
+      if (this.cmdstream) a.push({ key: 'stream', cls: 'mb-act-stream', icon: 'mdi-video-wireless', label: 'Live', title: 'Start stream', fn: () => this.startStream({}) })
+      if (this.cmdplayback) a.push({ key: 'playback', cls: 'mb-act-playback', icon: 'mdi-history', label: 'Playback', title: 'Playback', fn: () => this.playbackVideo({}) })
+      if (this.cmdtimeline) a.push({ key: 'timeline', cls: 'mb-act-timeline', icon: 'mdi-chart-timeline', label: 'Timeline', title: 'Request timeline', fn: () => this.getTimeline({}) })
+      if (this.tachoEnabled) a.push({ key: 'tacho', cls: 'mb-act-tacho', icon: 'mdi-smart-card-reader', label: 'Tacho', title: 'Request tachograph file', divider: true, fn: () => this.getTacho({}) })
+      return a
+    },
+    // the camera wall only makes sense with playable channels
+    hasCameraChannels () {
+      return (this.currentEvents || []).some(f => {
+        const k = fileKind(f)
+        return k === 'video' || k === 'image'
+      })
+    },
+    // file list filtered to the timeline zoom range (drag-select on the timeline)
+    visibleEvents () {
+      const list = this.currentEvents || []
+      if (!this.zoomRange) return list
+      const { from, to } = this.zoomRange
+      return list.filter(f => {
+        const end = f.created + ((f.meta && f.meta.duration) || 1)
+        return end > from && f.created < to
+      })
+    },
     tachoEnabled () {
       return !!(this.cmdtacho && this.item && this.item.configuration && this.item.configuration.tacho)
     },
@@ -511,6 +558,10 @@ export default {
     mainTimelineResize (size) {
       this.mainTimelineSize = size
     },
+    // timeline drag-select zoom → filter the file list to that time range (null = all)
+    onExplorerZoom (range) {
+      this.zoomRange = range
+    },
     playerTimelineResize (size) {
       this.playerTimelineSize = size
     },
@@ -536,8 +587,38 @@ export default {
       this.setDeviceId(this.item.id)
     },
     openMedia (media) {
+      if (!media) return
+      // video & images open in the camera wall (with their channel
+      // expanded); everything else (tacho→TachoBox, pdf/text→iframe, live
+      // stream→player, other→download) keeps the classic single-file viewer.
+      const k = fileKind(media)
+      // live streams always use the classic viewer (mediastream player)
+      if (!media.mediastream && (k === 'video' || k === 'image')) {
+        this.openCameraWallAt(media)
+        return
+      }
+      this.showcamerawall = false
       this.current = media
       this.showmedia = true
+    },
+    openCameraWallAt (media) {
+      const ch = media.meta && media.meta.channel
+      const dur = (media.meta && media.meta.duration) || 0
+      this.wallFocus = (ch === undefined || ch === null) ? (media.channel_id != null ? media.channel_id : 0) : ch
+      this.wallTime = media.created
+      this.wallAutoplay = fileKind(media) === 'video'
+      // frame the timeline to just this clip (video has a duration; images don't)
+      this.wallZoom = dur > 0 ? { from: media.created, to: media.created + dur } : null
+      this.current = media
+      this.showmedia = false
+      this.showcamerawall = true
+    },
+    openCameraWall () {
+      this.wallFocus = null
+      this.wallTime = null
+      this.wallAutoplay = false
+      this.wallZoom = null
+      this.showcamerawall = true
     },
     viewerNav (dir) {
       const list = this.currentEvents || []
@@ -768,6 +849,11 @@ export default {
 .mb-footer
   background: #14181c
   border-top: 1px solid rgba(255, 255, 255, .07)
+// full-bleed timeline: cancel the component's q-mx-md side margins (the 00:00 /
+// 23:59 labels are anchored inside the track, so no side padding is needed)
+.mb-footer .mb-flush-timeline
+  margin-left: 0
+  margin-right: 0
 
 // --- Media viewer overlay -------------------------------------------
 .mb-fade-enter-active,
@@ -872,6 +958,14 @@ export default {
   width: 1px
   align-self: stretch
   margin: 5px 4px
+
+// second toolbar row (narrow screens): let the command pill wrap if the row is
+// still too narrow to hold every button on one line
+.mb-commands-row
+  width: 100%
+.mb-action-wrap
+  flex-wrap: wrap
+  justify-content: center
   background: rgba(255, 255, 255, .12)
 
 .mb-icon-btn
