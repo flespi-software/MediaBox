@@ -300,7 +300,16 @@
   </q-layout>
 
   <div v-else class="absolute-full column flex-center text-center q-pa-lg" style="background:#14181c">
-    <template v-if="loadError">
+    <template v-if="!token || blocked">
+      <q-icon name="mdi-lock-outline" size="56px" color="blue-grey-4" class="q-mb-md" />
+      <div class="text-subtitle1 text-grey-4">Log in to view this device</div>
+      <div class="text-caption text-grey-6 q-mt-xs" style="max-width:360px">
+        {{ blocked ? 'Your session expired or the token was rejected.' : 'You need to be logged in to flespi' }} to
+        access device #{{ $route.params.deviceid }}.
+      </div>
+      <q-btn outline no-caps color="teal-4" icon="mdi-account-circle" label="Log in" class="q-mt-lg" @click="login" />
+    </template>
+    <template v-else-if="loadError">
       <q-icon name="mdi-alert-circle-outline" size="56px" color="red-4" class="q-mb-md" />
       <div class="text-subtitle1 text-grey-4">Couldn't load this device</div>
       <div class="text-caption text-grey-6 q-mt-xs" style="max-width:360px">
@@ -428,7 +437,8 @@ export default {
     ...mapState(useAuthStore, {
       region: store => store.region,
       token: store => store.token,
-      connected: store => store.connected
+      connected: store => store.connected,
+      blocked: store => store.blocked
     }),
     ...mapState(useAppearanceStore, {
       color: store => store.color
@@ -567,6 +577,10 @@ export default {
     },
     monthChange (e) {
       this.setSelectedMonth(e)
+    },
+    login () {
+      const base = (this.region && this.region.rest) || 'https://flespi.io'
+      window.open(`${base}/login/#/providers`, 'auth', 'width=500,height=600')
     },
     async init () {
       this.item = null
