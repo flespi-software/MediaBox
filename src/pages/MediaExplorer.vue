@@ -9,7 +9,7 @@
         <q-btn-toggle v-model="fileviewtype" class="mb-view-toggle" dense unelevated no-caps spread
           toggle-color="teal-6" text-color="blue-grey-3" :options="[
             { icon: 'mdi-format-list-bulleted-square', value: 'list', slot: 'list' },
-            { icon: 'mdi-view-grid', value: 'grid', slot: 'grid' },
+            { icon: 'mdi-view-comfy', value: 'grid', slot: 'grid' },
           ]">
           <template v-slot:list>
             <q-tooltip>List view</q-tooltip>
@@ -23,7 +23,16 @@
           v-if="commandActions.length && $q.screen.gt.sm">
           <template v-for="(a, i) in commandActions" :key="a.key">
             <div class="mb-action-divider" v-if="a.divider && i > 0" />
-            <q-btn class="mb-action-btn" :class="a.cls" flat dense no-caps :icon="a.icon"
+            <q-btn-dropdown v-if="a.children" class="mb-action-btn" :class="a.cls" flat dense no-caps
+              :icon="a.icon" :label="a.label" :title="a.title">
+              <q-list dense>
+                <q-item v-for="(c, ci) in a.children" :key="ci" clickable v-close-popup @click="c.fn">
+                  <q-item-section avatar><q-icon :name="c.icon" size="20px" /></q-item-section>
+                  <q-item-section>{{ c.label }}</q-item-section>
+                </q-item>
+              </q-list>
+            </q-btn-dropdown>
+            <q-btn v-else class="mb-action-btn" :class="a.cls" flat dense no-caps :icon="a.icon"
               :label="a.label" :title="a.title" @click="a.fn" />
           </template>
         </div>
@@ -42,7 +51,7 @@
           <q-tooltip>Camera wall — synchronized multi-channel playback</q-tooltip>
         </q-btn>
         <q-btn v-if="streamscount" icon="mdi-monitor-multiple" color="green-4" flat round
-          @click="showwall = true" title="Live streams wall">
+          @click="openStreams(null)" title="Live streams wall">
           <q-badge color="red" floating>{{ streamscount }}</q-badge>
         </q-btn>
         <q-btn icon="mdi-dock-right" round flat color="white" @click="toggleActivity()">
@@ -55,7 +64,16 @@
         <div class="mb-action-bar row items-center mb-labels mb-action-wrap">
           <template v-for="(a, i) in commandActions" :key="a.key">
             <div class="mb-action-divider" v-if="a.divider && i > 0" />
-            <q-btn class="mb-action-btn" :class="a.cls" flat dense no-caps :icon="a.icon"
+            <q-btn-dropdown v-if="a.children" class="mb-action-btn" :class="a.cls" flat dense no-caps
+              :icon="a.icon" :label="a.label" :title="a.title">
+              <q-list dense>
+                <q-item v-for="(c, ci) in a.children" :key="ci" clickable v-close-popup @click="c.fn">
+                  <q-item-section avatar><q-icon :name="c.icon" size="20px" /></q-item-section>
+                  <q-item-section>{{ c.label }}</q-item-section>
+                </q-item>
+              </q-list>
+            </q-btn-dropdown>
+            <q-btn v-else class="mb-action-btn" :class="a.cls" flat dense no-caps :icon="a.icon"
               :label="a.label" :title="a.title" @click="a.fn" />
           </template>
         </div>
@@ -76,7 +94,7 @@
           <div class="mb-section-title row items-center no-wrap">
             <q-icon name="mdi-access-point" size="16px" class="q-mr-xs" />Connections
           </div>
-          <ActivityPanel v-if="item" :item="item" @openMedia="openMedia" @embed="embed" @startStream="startStream" @requestPlayback="getPlaybackByTimeline" />
+          <ActivityPanel v-if="item" :item="item" @openMedia="openMedia" @embed="embed" @startStream="startStream" @requestPlayback="getPlaybackByTimeline" @openStreams="openStreams" />
           <div class="mb-section-title row items-center no-wrap">
             <q-icon name="mdi-tray-arrow-down" size="16px" class="q-mr-xs" />Last uploads
           </div>
@@ -288,8 +306,8 @@
     </transition>
 
     <transition name="mb-fade">
-      <StreamWall v-if="showwall" :streams="activeStreams" :device="item" class="absolute-full" style="z-index: 2100"
-        @close="showwall = false" @stop="stopStream" @embed="embed" />
+      <StreamWall v-if="showwall" :streams="wallStreams" :device="item" class="absolute-full" style="z-index: 2100"
+        @close="closeWall" @stop="stopStream" @embed="embed" />
     </transition>
 
     <transition name="mb-fade">
@@ -371,6 +389,7 @@ export default {
       current: null,
       showmedia: false,
       showwall: false,
+      wallConnectionId: null,
       showcamerawall: false,
       wallFocus: null,
       wallTime: null,
@@ -392,6 +411,8 @@ export default {
       cmdvideo: null,
       cmdtacho: null,
       cmdtimeline: null,
+      cmdstreambatch: null,
+      cmdplaybackbatch: null,
 
       pagination: {
         rowsPerPage: 0
@@ -458,10 +479,30 @@ export default {
       connections: store => store.connections
     }),
     activeStreams () {
-      return Object.entries(this.connections || {})
-        .map(([id, c]) => ({ ...c, id }))
-        .filter(c => c.meta && c.meta.mediastream)
-        .sort((a, b) => (a.established || 0) - (b.established || 0))
+      // a connection may carry several streams (batch) in meta.mediastreams;
+      // flatten to one entry per stream so the wall shows them all
+      const out = []
+      Object.entries(this.connections || {}).forEach(([id, c]) => {
+        if (!c.meta) return
+        const list = Array.isArray(c.meta.mediastreams) && c.meta.mediastreams.length
+          ? c.meta.mediastreams
+          : (c.meta.mediastream ? [c.meta.mediastream] : [])
+        list.forEach((ms) => {
+          out.push({
+            id: `${id}:${ms.channel != null ? ms.channel : ms.uuid}`,
+            connectionId: id,
+            established: c.established,
+            meta: { mediastream: ms }
+          })
+        })
+      })
+      return out.sort((a, b) => (a.established || 0) - (b.established || 0))
+    },
+    // streams shown in the wall: all, or just one connection's (opened from its Play)
+    wallStreams () {
+      return this.wallConnectionId
+        ? this.activeStreams.filter(s => s.connectionId === this.wallConnectionId)
+        : this.activeStreams
     },
     // device command buttons, built from capability flags — rendered inline on
     // wide screens and in a second toolbar row on narrow screens
@@ -473,6 +514,11 @@ export default {
       if (this.cmdplayback) a.push({ key: 'playback', cls: 'mb-act-playback', icon: 'mdi-history', label: 'Playback', title: 'Playback', fn: () => this.playbackVideo({}) })
       if (this.cmdtimeline) a.push({ key: 'timeline', cls: 'mb-act-timeline', icon: 'mdi-chart-timeline', label: 'Timeline', title: 'Request timeline', fn: () => this.getTimeline({}) })
       if (this.tachoEnabled) a.push({ key: 'tacho', cls: 'mb-act-tacho', icon: 'mdi-smart-card-reader', label: 'Tacho', title: 'Request tachograph file', divider: true, fn: () => this.getTacho({}) })
+      // Streamax multi-channel commands, grouped in one dropdown
+      const batch = []
+      if (this.cmdstreambatch) batch.push({ icon: 'mdi-video-wireless', label: 'Stream (multi-channel)', fn: () => this.startStreamBatch({}) })
+      if (this.cmdplaybackbatch) batch.push({ icon: 'mdi-history', label: 'Playback (multi-channel)', fn: () => this.playbackVideoBatch({}) })
+      if (batch.length) a.push({ key: 'batch', cls: 'mb-act-batch', icon: 'mdi-playlist-play', label: 'Batch', title: 'Multi-channel stream / playback', divider: true, children: batch })
       return a
     },
     // the camera wall only makes sense with playable channels
@@ -737,6 +783,8 @@ export default {
         this.cmdplayback = response.data.result[0].commands.find(com => com.name === 'playback_video')
         this.cmdtacho = response.data.result[0].commands.find(com => com.name === 'request_tachograph_file')
         this.cmdtimeline = response.data.result[0].commands.find(com => com.name === 'video_timeline')
+        this.cmdstreambatch = response.data.result[0].commands.find(com => com.name === 'start_videostream_batch')
+        this.cmdplaybackbatch = response.data.result[0].commands.find(com => com.name === 'playback_video_batch')
       } else {
         this.cmdvideo = undefined
         this.cmdphoto = undefined
@@ -744,6 +792,8 @@ export default {
         this.cmdplayback = undefined
         this.cmdtacho = undefined
         this.cmdtimeline = undefined
+        this.cmdstreambatch = undefined
+        this.cmdplaybackbatch = undefined
       }
     },
 
@@ -790,6 +840,15 @@ export default {
         this.$refs.mediacommand.open(this.item.id, this.cmdtimeline, { from, to, ...data }, this.setCommandID)
       }
     },
+    // open the wall for all streams (connectionId=null) or just one connection's
+    openStreams (connectionId) {
+      this.wallConnectionId = connectionId || null
+      this.showwall = true
+    },
+    closeWall () {
+      this.showwall = false
+      this.wallConnectionId = null
+    },
     startStream (data) {
       if (this.cmdstream) {
         // this.$root.$emit('openDialogStack', { dialog_type: 'mediarequest', title: 'Send media request', back: false, item: this.item, item_type: 'devices', command: this.cmdvideo, cb: this.setCommandID, payload: { from: Math.floor(d.getTime() / 1000) } })
@@ -801,6 +860,16 @@ export default {
       if (this.cmdplayback) {
         // this.$root.$emit('openDialogStack', { dialog_type: 'mediarequest', title: 'Send media request', back: false, item: this.item, item_type: 'devices', command: this.cmdvideo, cb: this.setCommandID, payload: { from: Math.floor(d.getTime() / 1000) } })
         this.$refs.mediacommand.open(this.item.id, this.cmdplayback, { mediastream: 'hls', ...data }, this.setCommandID)
+      }
+    },
+    startStreamBatch (data) {
+      if (this.cmdstreambatch) {
+        this.$refs.mediacommand.open(this.item.id, this.cmdstreambatch, { mediastream: 'hls', ...data }, this.setCommandID)
+      }
+    },
+    playbackVideoBatch (data) {
+      if (this.cmdplaybackbatch) {
+        this.$refs.mediacommand.open(this.item.id, this.cmdplaybackbatch, { mediastream: 'hls', ...data }, this.setCommandID)
       }
     },
     getPlaybackByTimeline ({ channel, timestamp, duration }) {

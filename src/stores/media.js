@@ -29,11 +29,16 @@ export const useMediaStore = defineStore('media', {
     mediaDeviceTypes: {},
     timeline: {},
     realtimeList: [],
-    cmds: ['request_video', 'take_photo', 'start_videostream', 'video_timeline', 'playback_video', 'request_tachograph_file'],
+    cmds: ['request_video', 'take_photo', 'start_videostream', 'video_timeline', 'playback_video', 'request_tachograph_file', 'start_videostream_batch', 'playback_video_batch'],
     recentCommandsLimit: 7
   }),
   getters: {
-    streamscount: state => Object.values(state.connections).filter(el => !!el.meta).length,
+    // a batch stream connection carries several streams in meta.mediastreams
+    streamscount: state => Object.values(state.connections).reduce((n, c) => {
+      if (!c.meta) return n
+      const list = Array.isArray(c.meta.mediastreams) ? c.meta.mediastreams : (c.meta.mediastream ? [c.meta.mediastream] : [])
+      return n + list.length
+    }, 0),
     currentEvents: state => state.media[state.selectedDate] || [],
     timelines: state => state.timeline[state.selectedDate] || [],
     recentCommands: state => Object.values(state.commands)

@@ -1,16 +1,16 @@
 <template>
 <div>
   <template v-for="(c) in connections" :key="c.id">
-    <q-item :clickable="!!c.meta" @click="() => { if (c.meta) $emit('openMedia', c.meta) }">
+    <q-item :clickable="!!c.meta" @click="() => { if (isStream(c)) onConnClick(c); else if (c.meta) $emit('openMedia', c.meta) }">
       <q-item-section avatar style="padding-right:10px;min-width:30px;">
-        <q-icon name="mdi-video-wireless" v-if="c.meta && c.meta.mediastream" />
+        <q-icon name="mdi-video-wireless" v-if="isStream(c)" />
         <q-icon name="mdi-multimedia" v-else-if="c.secondary" />
         <q-icon name="mdi-developer-board" v-else />
       </q-item-section>
       <q-item-section>
-        <q-item-label overline v-if="c.meta && c.meta.mediastream">Stream
-          started
-          <q-badge :color="getStreamTypeColor(c.meta.mediastream.mediastream || c.meta.mediastream.stream_type)" class="q-ml-xs stream-type-badge">{{ getStreamTypeLabel(c.meta.mediastream.mediastream || c.meta.mediastream.stream_type) }}</q-badge>
+        <q-item-label overline v-if="isStream(c)">Stream started
+          <q-badge :color="getStreamTypeColor(streamsOf(c)[0].mediastream || streamsOf(c)[0].stream_type)" class="q-ml-xs stream-type-badge">{{ getStreamTypeLabel(streamsOf(c)[0].mediastream || streamsOf(c)[0].stream_type) }}</q-badge>
+          <span v-if="streamsOf(c).length > 1" class="q-ml-xs text-blue-grey-4">· {{ streamsOf(c).length }} ch</span>
         </q-item-label>
         <q-item-label overline v-else-if="c.secondary">Media
           uploading</q-item-label>
@@ -18,22 +18,27 @@
         <q-item-label caption :title="formatUnix(c.established)" v-if="tick > 0">{{ formatAgo(c.established ||
           0) }}</q-item-label>
       </q-item-section>
-      <q-item-section side v-if="c.meta && c.meta.mediastream" style="padding-left:10px;min-width:30px;">
+      <q-item-section side v-if="isStream(c)" style="padding-left:10px;min-width:30px;">
         <q-btn size="sm" color="white" flat dense round icon="mdi-play" title="Play stream"
-          @click.stop="$emit('openMedia', c.meta)" />
-      </q-item-section>
-      <q-item-section side v-if="c.meta && c.meta.mediastream" style="padding-left:10px;min-width:30px;">
-        <q-btn size="sm" color="white" flat dense round icon="mdi-share" title="Share"
-          @click.stop="$emit('embed', c.meta.mediastream.uuid)" />
+          @click.stop="onConnClick(c)" />
       </q-item-section>
       <q-item-section side style="padding-left:10px;min-width:30px;">
         <q-btn size="sm" color="red-4" flat dense round icon="mdi-network-off-outline" title="Drop connection"
           @click.stop="dropConnection(c.id)" />
       </q-item-section>
     </q-item>
-    <div v-if="c.meta && c.meta.mediastream" class="q-px-md q-pb-sm">
-      <img :src="streamSrcUrl(c.meta.mediastream, 'preview=jpeg')"
-        class="mb-conn-preview" @click="$emit('openMedia', c.meta)" />
+    <div v-if="isStream(c)" class="q-px-md q-pb-sm">
+      <div class="mb-conn-streams" :class="{ 'mb-conn-streams-multi': streamsOf(c).length > 1 }">
+        <div v-for="ms in streamsOf(c)" :key="ms.uuid" class="mb-conn-stream">
+          <img :src="streamSrcUrl(ms, 'preview=jpeg')" class="mb-conn-preview" @click="playStream(ms)" />
+          <div class="mb-conn-streambar row items-center no-wrap">
+            <span class="text-caption text-blue-grey-4" v-if="ms.channel != null">CH {{ ms.channel }}</span>
+            <q-space />
+            <q-btn size="sm" color="white" flat dense round icon="mdi-share" title="Share"
+              @click.stop="$emit('embed', ms.uuid)" />
+          </div>
+        </div>
+      </div>
     </div>
   </template>
   <q-list v-if="recentCommands.length > 0" class="commands-list">
@@ -50,8 +55,9 @@
         <q-item-section>
           <q-item-label class="command-label row items-center no-wrap">
             <span class="ellipsis">{{ getCommandLabel(cmd.name) }}</span>
-            <q-badge v-if="cmd.response && (cmd.name === 'start_videostream' || cmd.name === 'playback_video') && getResponseStreamType(cmd.response)"
+            <q-badge v-if="cmd.response && ['start_videostream', 'playback_video', 'start_videostream_batch', 'playback_video_batch'].includes(cmd.name) && getResponseStreamType(cmd.response)"
               :color="getStreamTypeColor(getResponseStreamType(cmd.response))" class="stream-type-badge q-ml-xs">{{ getStreamTypeLabel(getResponseStreamType(cmd.response)) }}</q-badge>
+            <span v-if="Array.isArray(cmd.response) && cmd.response.length > 1" class="q-ml-xs text-blue-grey-4" style="font-size:.68rem">{{ cmd.response.length }} ch</span>
           </q-item-label>
           <q-item-label caption class="ellipsis"
             :title="cmd.properties.duration ? (formatUnix(cmd.properties.from) + ' - ' + formatUnix(cmd.properties.from + cmd.properties.duration)) : formatUnix(cmd.timestamp)">
@@ -62,7 +68,7 @@
         </q-item-section>
         <q-item-section side v-if="streamConnection(cmd)" class="mb-cmd-side">
           <q-btn size="sm" color="white" flat dense round icon="mdi-play" title="Play live stream"
-            @click.stop="$emit('openMedia', streamConnection(cmd).meta)" />
+            @click.stop="playCommand(cmd)" />
         </q-item-section>
         <q-item-section side v-if="cmd.action === 'queued' || cmd.action === 'sent'" style="padding-left:5px;min-width:30px;">
           <q-btn size="sm" color="red" flat dense round icon="mdi-close-circle"
@@ -110,7 +116,7 @@ export default defineComponent({
   props: {
     item: null
   },
-  emits: ['openMedia', 'embed', 'startStream', 'requestPlayback'],
+  emits: ['openMedia', 'embed', 'startStream', 'requestPlayback', 'openStreams'],
   data () {
     return {
       interval: null,
@@ -144,13 +150,35 @@ export default defineComponent({
     canApplyTimeline (cmd) {
       return cmd.name === 'video_timeline' && Array.isArray(cmd.response)
     },
-    // The live connection matching a stream command's response, or null. Used to
-    // show the Play button only while the stream is still running — once it ends
-    // its connection is gone, so playing it is no longer relevant.
+    // streams carried by a connection (batch: meta.mediastreams; single: mediastream)
+    streamsOf (c) {
+      if (!c || !c.meta) return []
+      if (Array.isArray(c.meta.mediastreams) && c.meta.mediastreams.length) return c.meta.mediastreams
+      return c.meta.mediastream ? [c.meta.mediastream] : []
+    },
+    isStream (c) {
+      return this.streamsOf(c).length > 0
+    },
+    // one preview -> that stream fullscreen
+    playStream (ms) {
+      this.$emit('openMedia', { mediastream: ms })
+    },
+    // header play / row -> the wall showing just this connection's streams
+    onConnClick (c) {
+      this.$emit('openStreams', c.id)
+    },
+    // live connection matching a stream command's response (single or batch array),
+    // or null once the stream ended and its connection is gone
     streamConnection (cmd) {
-      const uuid = cmd.response && cmd.response.uuid
-      if (!uuid || !(cmd.response.url || cmd.response.hls || cmd.response.flv)) return null
-      return this.connections.find(c => c.meta && c.meta.mediastream && c.meta.mediastream.uuid === uuid) || null
+      const resp = cmd.response
+      if (!resp) return null
+      const uuids = (Array.isArray(resp) ? resp : [resp]).map(r => r && r.uuid).filter(Boolean)
+      if (!uuids.length) return null
+      return this.connections.find(c => this.streamsOf(c).some(ms => uuids.includes(ms.uuid))) || null
+    },
+    playCommand (cmd) {
+      const conn = this.streamConnection(cmd)
+      if (conn) this.$emit('openStreams', conn.id)
     },
     canOpenAsFile (cmd) {
       return (cmd.name === 'request_video' || cmd.name === 'request_tachograph_file') &&
@@ -244,7 +272,9 @@ export default defineComponent({
         request_video: 'Video Request',
         take_photo: 'Photo',
         video_timeline: 'Timeline',
-        request_tachograph_file: 'Tachograph'
+        request_tachograph_file: 'Tachograph',
+        start_videostream_batch: 'Live Stream (batch)',
+        playback_video_batch: 'Playback (batch)'
       }
       return labels[name] || name
     },
@@ -255,7 +285,9 @@ export default defineComponent({
         request_video: 'mdi-video',
         take_photo: 'mdi-camera',
         video_timeline: 'mdi-chart-timeline',
-        request_tachograph_file: 'mdi-file-document'
+        request_tachograph_file: 'mdi-file-document',
+        start_videostream_batch: 'mdi-video-wireless',
+        playback_video_batch: 'mdi-video-wireless'
       }
       return icons[name] || 'mdi-remote'
     },
@@ -266,7 +298,9 @@ export default defineComponent({
         request_video: 'red',
         take_photo: 'blue',
         video_timeline: 'grey-5',
-        request_tachograph_file: 'purple'
+        request_tachograph_file: 'purple',
+        start_videostream_batch: 'green',
+        playback_video_batch: 'red'
       }
       return colors[name] || 'white'
     },
@@ -290,12 +324,13 @@ export default defineComponent({
       return colors[type] || 'teal'
     },
     getResponseStreamType (response) {
-      if (!response) return null
-      if (response.mediastream) return response.mediastream
-      if (response.stream_type) return response.stream_type
-      if (response.flv) return 'flv'
-      if (response.hls) return 'hls'
-      if (response.url) return 'hls'
+      const r = Array.isArray(response) ? response[0] : response
+      if (!r) return null
+      if (r.mediastream) return r.mediastream
+      if (r.stream_type) return r.stream_type
+      if (r.flv) return 'flv'
+      if (r.hls) return 'hls'
+      if (r.url) return 'hls'
       return null
     },
     getStatusLabel (action) {
@@ -319,6 +354,22 @@ export default defineComponent({
   border-radius: 6px
   border: 1px solid rgba(255, 255, 255, .08)
   cursor: pointer
+
+.mb-conn-streams
+  display: flex
+  flex-wrap: wrap
+  gap: 6px
+
+.mb-conn-stream
+  flex: 1 1 100%
+  min-width: 0
+
+// multistream: two equal previews per row (no grow, so a lone last one stays 50%)
+.mb-conn-streams-multi .mb-conn-stream
+  flex: 0 0 calc(50% - 3px)
+
+.mb-conn-streambar
+  padding: 2px 2px 0
 
 .media-highlighted
   border: 1px dotted white

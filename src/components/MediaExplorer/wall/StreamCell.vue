@@ -11,7 +11,7 @@
           <q-tooltip>Share</q-tooltip>
         </q-btn>
         <q-btn flat round dense size="sm" color="red-4" icon="mdi-stop"
-          @click.stop="$emit('stop', stream.id)">
+          @click.stop="$emit('stop', stream.connectionId || stream.id)">
           <q-tooltip>Stop stream</q-tooltip>
         </q-btn>
       </template>
