@@ -7,6 +7,10 @@
       <div class="text-caption text-blue-grey-4 q-ml-md">{{ date }}</div>
     </template>
     <template #header-right>
+      <q-btn v-if="visibleChannels.length" flat dense no-caps color="teal-4" icon="mdi-view-grid"
+        label="All channels" class="q-mr-sm" @click="showAllChannels">
+        <q-tooltip>Show all channels ({{ visibleChannels.length }} selected)</q-tooltip>
+      </q-btn>
       <q-btn flat round dense :color="showPreviews ? 'teal-4' : 'white'"
         :icon="showPreviews ? 'mdi-image-multiple' : 'mdi-image-multiple-outline'"
         @click="showPreviews = !showPreviews">
@@ -19,7 +23,7 @@
     </template>
 
     <div class="cw-body row no-wrap col">
-      <WallGrid class="col" :items="channels" :get-key="(ch) => ch" v-model:focus="focusedChannel">
+      <WallGrid class="col" :items="gridChannels" :get-key="(ch) => ch" v-model:focus="focusedChannel">
         <template #empty>
           <div class="column flex-center text-grey-6" style="height:100%">
             <q-icon name="mdi-video-off-outline" size="64px" style="opacity:.45" class="q-mb-md" />
@@ -28,7 +32,7 @@
         </template>
         <template #default="{ item, focused, toggleFocus }">
           <CameraCell :channel="item" :segments="lanes[item]" :t="t" :playing="playing" :rate="rate"
-            :focused="focused" :audio-on="audioChannel === item"
+            :focused="focused" :active="String(activeChannel) === String(item)" :audio-on="audioChannel === item"
             @toggle-focus="toggleFocus" @toggle-audio="toggleAudio(item)" />
         </template>
       </WallGrid>
@@ -38,9 +42,10 @@
     </div>
 
     <MediaTimeline ref="wallTimeline" class="cw-timeline" :device="device" :intervals="wallEvents" :date="date"
-      :playhead="t" scrubbable zoomable :initial-zoom="initialZoom" :highlight-channel="focusedChannel"
+      :playhead="t" scrubbable zoomable :initial-zoom="initialZoom" :highlight-channel="activeChannel"
+      :highlight-channels="timelineDimSet"
       :nopreviews="!showPreviews"
-      @seek="onSeek" @scrub-start="onScrubStart" @scrub-end="onScrubEnd"
+      @seek="onSeek" @scrub-start="onScrubStart" @scrub-end="onScrubEnd" @select-channel="onSelectChannel"
       @itemClick="onPreviewClick" @zoom-change="onZoomChange" />
 
     <CameraControls :playing="playing" :rate="rate" :skip-gaps="skipGaps" :t="t"
@@ -122,7 +127,13 @@ export default defineComponent({
       skipGaps: true,
       showPreviews: false,
       focusedChannel: focus,
-      audioChannel: focus, // exactly one cell plays sound; follows the expanded one
+      // the "active" channel: gets sound + timeline highlight (+ the highlight
+      // border in the grid). Independent of fullscreen focus, so it can be
+      // switched by clicking a lane without expanding the grid.
+      activeChannel: focus,
+      // ctrl/cmd-clicked channels shown as a subset grid; empty = show all channels
+      visibleChannels: [],
+      audioChannel: focus, // exactly one cell plays sound; follows the active channel
       wasPlayingBeforeScrub: false,
       showTrack: pref === null ? true : pref,
       track: [],
@@ -133,6 +144,20 @@ export default defineComponent({
   computed: {
     channels () { return this.model.channels },
     lanes () { return this.model.lanes },
+    // channels shown in the grid: the ctrl-clicked subset, or all of them. Kept in
+    // the natural channel order (filter the full list rather than the click order)
+    gridChannels () {
+      if (!this.visibleChannels.length) return this.channels
+      const sel = this.channels.filter((ch) => this.visibleChannels.includes(String(ch)))
+      return sel.length ? sel : this.channels // never show an empty grid
+    },
+    // channels the timeline should keep bright (dimming the rest): the fullscreen
+    // channel, else the ctrl-selected subset. Empty = grid shows all -> nothing
+    // dimmed (the active channel is still ringed via :highlight-channel)
+    timelineDimSet () {
+      if (this.focusedChannel != null) return [String(this.focusedChannel)]
+      return this.visibleChannels
+    },
     // video+image only, so the shared timeline's lanes match the grid channels
     wallEvents () {
       return (this.events || []).filter((f) => {
@@ -162,8 +187,16 @@ export default defineComponent({
   watch: {
     // keep the skip-gaps guard in sync with the toggle: re-run the check when re-enabled
     skipGaps (on) { if (on) this.skipCheck() },
-    // expand a channel -> it gets the sound; collapse to grid -> silence
-    focusedChannel (val) { this.audioChannel = val }
+    // expanding a channel makes it the active one (collapsing to grid keeps it active)
+    focusedChannel (val) { if (val !== null) this.activeChannel = val },
+    // the active channel is the one that plays sound
+    activeChannel (val) { this.audioChannel = val },
+    // drop subset entries for channels that no longer exist (e.g. day changed)
+    channels (list) {
+      if (!this.visibleChannels.length) return
+      const keys = list.map(String)
+      this.visibleChannels = this.visibleChannels.filter((ch) => keys.includes(ch))
+    }
   },
   mounted () {
     // frame + loop playback to the opened clip's range, if given
@@ -177,9 +210,11 @@ export default defineComponent({
     }
     if (this.autoplay) this.play()
     if (this.showTrack && !this.trackLoaded) this.fetchTrack()
+    window.addEventListener('keydown', this.onKeydown)
   },
   beforeUnmount () {
     if (this.skipCheck) this.skipCheck.cancel()
+    window.removeEventListener('keydown', this.onKeydown)
     this.dispose()
   },
   methods: {
@@ -249,6 +284,61 @@ export default defineComponent({
     // clicking a preview thumbnail jumps the playhead to that file's start
     onPreviewClick (file) {
       if (file && file.created != null) this.onSeek(file.created)
+    },
+    // clicking a channel's lane on the timeline makes it the active channel
+    // (sound + highlight); if a channel is currently expanded, switch the
+    // fullscreen view to the clicked one too. Ctrl/cmd-click instead toggles the
+    // channel in the subset grid (multi-camera view).
+    onSelectChannel (ch, additive) {
+      const key = String(ch)
+      if (additive) {
+        if (!this.visibleChannels.length) {
+          // ctrl-click from the "all channels" view starts a subset
+          if (String(this.activeChannel) === key) {
+            // clicking the channel we're on = turn it off: show every other channel
+            // and move the active/sound to one of them (one click, no isolate step)
+            const rest = this.channels.map(String).filter((c) => c !== key)
+            if (!rest.length) return // single channel — nothing to turn off to
+            this.visibleChannels = rest
+            this.focusedChannel = null
+            this.activeChannel = rest[0]
+            return
+          }
+          // clicking another channel = keep the one we're on and add this one
+          const base = this.activeChannel != null ? [String(this.activeChannel)] : []
+          this.visibleChannels = [...base, key]
+          this.focusedChannel = null // reveal the subset grid, not one fullscreen cell
+          this.activeChannel = key
+          return
+        }
+        const i = this.visibleChannels.indexOf(key)
+        if (i >= 0) {
+          this.visibleChannels.splice(i, 1) // removing the last one -> back to all
+          // if the removed channel was active, hand active to a remaining one
+          if (String(this.activeChannel) === key && this.visibleChannels.length) {
+            this.activeChannel = this.visibleChannels[0]
+          }
+        } else {
+          this.visibleChannels.push(key)
+          this.focusedChannel = null
+          this.activeChannel = key
+          // if the subset now covers every channel, treat it as "show all"
+          if (this.visibleChannels.length >= this.channels.length) this.visibleChannels = []
+        }
+        return
+      }
+      this.activeChannel = key
+      if (this.focusedChannel !== null) this.focusedChannel = key
+    },
+    // clear the ctrl-click subset -> the grid shows every channel again
+    showAllChannels () {
+      this.visibleChannels = []
+    },
+    // Esc: collapse a fullscreen channel first, then drop the subset grid
+    onKeydown (e) {
+      if (e.key !== 'Escape') return
+      if (this.focusedChannel !== null) { this.focusedChannel = null; return }
+      if (this.visibleChannels.length) this.showAllChannels()
     },
     // jump to the previous/next clip start (within the focused channel, or across
     // all channels in the grid view). Leaving a single-clip zoom first so we can move.

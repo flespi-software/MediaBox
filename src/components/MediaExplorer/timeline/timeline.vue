@@ -17,7 +17,7 @@
 
       <div v-for="(intrvl, tl) in timelineIntervals" :key="tl" ref="timeline"
         :style="`margin-bottom:3px;height:16px;width:100%; overflow:hidden;${intrvl.length ? 'border: 1px solid rgba(255,255,255,.10);' : 'border:1px dashed rgba(255,255,255,.18)'}`"
-        :class="['rounded-borders', 'relative-position', 'mb-tl-track', { 'mb-tl-dim': highlightChannel != null && String(tl) !== String(highlightChannel) }]"
+        :class="['rounded-borders', 'relative-position', 'mb-tl-track', { 'mb-tl-dim': laneDimmed(tl), 'mb-tl-selected': laneSelected(tl) }]"
         title="Click and hold to request media">
         <template v-if="available && available[tl]">
           <div v-for="(tmln, index) of available[tl]" :key="tmln.begin + (index / 10000)"
@@ -95,7 +95,9 @@ export default {
     // camera wall is opened for a specific clip. Does not emit zoom-change.
     initialZoom: { type: Object, default: null },
     // when a channel is expanded in the camera wall, dim the other channels' lanes
-    highlightChannel: { type: [String, Number], default: null }
+    highlightChannel: { type: [String, Number], default: null },
+    // ctrl-selected channels (multi-camera subset): highlighted, others dimmed
+    highlightChannels: { type: Array, default: () => [] }
   },
   setup () {
     const appearance = useAppearanceStore()
@@ -124,7 +126,11 @@ export default {
       downTime: 0,
       moved: false,
       pointerDown: false,
-      suppressClick: false
+      suppressClick: false,
+      // channel (lane) under the pointer at press, so a click can select it
+      downChannel: null,
+      // ctrl/cmd held at press -> additive (multi-channel) selection
+      downAdditive: false
     }
   },
   computed: {
@@ -185,6 +191,10 @@ export default {
       })
       return obj
     },
+    // fast lookup of the ctrl-selected channel subset (as strings)
+    hlChannelSet () {
+      return new Set((this.highlightChannels || []).map(String))
+    },
     available () {
       const obj = {}
       if (this.timeline) {
@@ -230,6 +240,16 @@ export default {
       this.size = size
       this.$emit('resizeTimeline', size)
     },
+    // lane highlight state (camera wall): a lane gets the teal ring when it's the
+    // active channel or one of the ctrl-selected subset; lanes are only dimmed
+    // when the grid is actually narrowed (a subset / fullscreen), never just to
+    // mark the active channel — so returning to "all channels" doesn't invert
+    laneSelected (tl) {
+      return this.hlChannelSet.has(String(tl)) || String(tl) === String(this.highlightChannel)
+    },
+    laneDimmed (tl) {
+      return this.hlChannelSet.size > 0 && !this.laneSelected(tl)
+    },
     // keep the first/last scale labels inside the track instead of hanging off
     // the edges (the middle ones are centered under their tick)
     labelStyle (l) {
@@ -246,6 +266,20 @@ export default {
     },
     scrubTime (e) {
       return this.timeFromClientX(e.clientX)
+    },
+    // which channel lane is under a vertical position — lanes render one track div
+    // per channel (ref="timeline"), in the same order as timelineIntervals' keys
+    channelAtClientY (clientY) {
+      const tracks = this.$refs.timeline
+      if (!tracks || !tracks.length) return null
+      const keys = Object.keys(this.timelineIntervals)
+      for (let i = 0; i < tracks.length; i++) {
+        const el = tracks[i]
+        if (!el) continue
+        const r = el.getBoundingClientRect()
+        if (clientY >= r.top && clientY <= r.bottom) return keys[i]
+      }
+      return null
     },
     applyZoom (from, to) {
       this.zoomStart = from
@@ -275,6 +309,8 @@ export default {
       this.pointerDown = true
       this.downX = e.clientX
       this.downTime = this.timeFromClientX(e.clientX)
+      this.downChannel = this.channelAtClientY(e.clientY)
+      this.downAdditive = e.ctrlKey || e.metaKey
       this.moved = false
       if (this.scrubbable && !this.zoomable) {
         // plain scrub mode (drag = seek)
@@ -323,6 +359,9 @@ export default {
       // plain click: seek in camera wall; let it fall through to snap-to-file in explorer
       if (this.scrubbable) {
         this.$emit('seek', this.downTime)
+        // clicking a lane makes that channel active; ctrl/cmd-click toggles it in
+        // the multi-channel selection instead
+        if (this.downChannel != null) this.$emit('select-channel', this.downChannel, this.downAdditive)
         this.suppressClick = true
       }
     },
@@ -417,9 +456,13 @@ export default {
 .mb-tl-track
   background: #20262b
   transition: opacity .15s ease
-// dim channels that aren't the currently expanded one in the camera wall
+// dim channels that aren't highlighted (expanded / ctrl-selected) in the camera wall
 .mb-tl-dim
   opacity: .3
+// ctrl-selected channels in the multi-camera subset: teal ring (inset so it
+// doesn't fight the track's inline border)
+.mb-tl-selected
+  box-shadow: inset 0 0 0 1px rgba(38, 198, 218, .9)
 .interval-viewport-upper
   height:100%
   border-color: #f00

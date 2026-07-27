@@ -14,12 +14,18 @@ import { fileKind } from '../utils/file-type'
 
 const IMAGE_MIN_HOLD = 3 // seconds a lone/last image stays visible
 
-// Higher priority wins an overlapping region: newest upload first, then newest
-// created, then uuid for stability. Swap this comparator to change the policy.
+// Higher priority wins an overlapping region: a video always beats an image, so
+// a photo taken mid-clip never interrupts the video — it only shows where no
+// video covers that instant. Then newest upload, newest created, uuid (stable).
 function priority (a, b) {
-  return (b.uploaded || 0) - (a.uploaded || 0) ||
-    (b.created || 0) - (a.created || 0) ||
-    String(b.uuid).localeCompare(String(a.uuid))
+  const av = a.kind === 'video' ? 1 : 0
+  const bv = b.kind === 'video' ? 1 : 0
+  if (av !== bv) return bv - av
+  const fa = a.file
+  const fb = b.file
+  return (fb.uploaded || 0) - (fa.uploaded || 0) ||
+    (fb.created || 0) - (fa.created || 0) ||
+    String(fb.uuid).localeCompare(String(fa.uuid))
 }
 
 function channelKey (file) {
@@ -44,20 +50,34 @@ function naturalExtent (file, sortedByCreated, idx, dayEnd) {
 // Resolve overlapping raw intervals into a non-overlapping lane via a boundary
 // sweep: between consecutive boundary points, the highest-priority file covering
 // the midpoint owns that slice; adjacent slices of the same file are merged.
+//
+// Continuity: while a video is already the active file, it keeps owning the
+// following slices as long as it still covers them — an overlapping video only
+// takes over once the current one ends. Without this a higher-priority video
+// overlapping the middle of the current clip would split the lane and force a
+// mid-clip source reload (a visible freeze). Images carry no reload cost, so the
+// bias applies to video only; video-beats-image is still enforced by priority().
 function resolveLane (raw) {
   const pts = new Set()
   raw.forEach((r) => { pts.add(r.start); pts.add(r.end) })
   const bounds = [...pts].sort((a, b) => a - b)
   const segs = []
+  let prev = null // interval chosen for the previous (adjacent) slice
   for (let i = 0; i < bounds.length - 1; i++) {
     const s = bounds[i]
     const e = bounds[i + 1]
     if (e <= s) continue
     const mid = (s + e) / 2
     const covering = raw.filter((r) => r.start <= mid && mid < r.end)
-    if (!covering.length) continue
-    covering.sort((a, b) => priority(a.file, b.file))
-    const winner = covering[0]
+    if (!covering.length) { prev = null; continue }
+    covering.sort((a, b) => priority(a, b))
+    let winner = covering[0]
+    // stay on the previous video while it still covers this slice
+    if (prev && prev.kind === 'video') {
+      const cont = covering.find((r) => r.file.uuid === prev.file.uuid)
+      if (cont) winner = cont
+    }
+    prev = winner
     const last = segs[segs.length - 1]
     if (last && last.uuid === winner.file.uuid && last.end === s) {
       last.end = e // merge adjacent slices of the same file

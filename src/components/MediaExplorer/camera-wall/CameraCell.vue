@@ -1,5 +1,5 @@
 <template>
-  <div class="cc-cell" :class="{ 'cc-focused': focused }">
+  <div class="cc-cell" :class="{ 'cc-focused': focused, 'cc-active': active && !focused }">
     <MediaPlayer v-if="videoOptions" ref="player" :options="videoOptions"
       @ready="onPlayerReady" class="cc-media bg-black" />
     <img v-else-if="imgSrc" :src="imgSrc" class="cc-media cc-img" />
@@ -40,6 +40,8 @@ export default defineComponent({
     playing: { type: Boolean, default: false },
     rate: { type: Number, default: 1 },
     focused: { type: Boolean, default: false },
+    // this cell is the active channel (sound + highlight border in the grid)
+    active: { type: Boolean, default: false },
     // this cell is the one playing sound (all others muted)
     audioOn: { type: Boolean, default: false }
   },
@@ -193,4 +195,10 @@ export default defineComponent({
   width: 100%
   height: 100%
   background: #000
+
+// active channel in the grid: teal highlight ring (drawn inside, no layout shift)
+.cc-active
+  outline: 2px solid #26c6da
+  outline-offset: -2px
+  box-shadow: 0 0 10px rgba(38, 198, 218, .45)
 </style>
