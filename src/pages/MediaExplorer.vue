@@ -288,6 +288,8 @@
         </template>
         <iframe v-else-if="viewerStrategy(current) === 'pdf' || viewerStrategy(current) === 'text'"
           :src="mediaFileUrl(current)" style="width: 100%; height: 100%; border: 0; display: block;" class="bg-white" />
+        <ArchiveViewer v-else-if="fileKind(current) === 'archive'" :file="current"
+          style="width: calc(100% - 8px); height: 100%" />
         <div v-else class="fit column flex-center text-white q-pa-lg text-center">
           <q-icon :name="fileKindMeta(current).icon" :style="{ color: fileKindMeta(current).color }" size="80px" />
           <div class="text-h6 q-mt-md ellipsis" style="max-width: 90%">{{ current.name }}</div>
@@ -358,6 +360,7 @@ import MediaItem from '../components/MediaExplorer/item.vue'
 import ActivityPanel from '../components/MediaExplorer/ActivityPanel.vue'
 import StreamWall from '../components/MediaExplorer/StreamWall.vue'
 import CameraWall from '../components/MediaExplorer/camera-wall/CameraWall.vue'
+import ArchiveViewer from '../components/MediaExplorer/ArchiveViewer.vue'
 import { mediaFileUrl, streamSrcUrl, streamMimeType } from '../utils/media-url'
 import { isTachographFile, tachoboxUrl } from '../utils/tachograph-url'
 import { fileKind, fileKindMeta, hasThumbnail, viewerStrategy } from '../utils/file-type'
@@ -373,7 +376,8 @@ export default {
     StreamWall,
     CameraWall,
     MediaCommand,
-    UploadMedia
+    UploadMedia,
+    ArchiveViewer
   },
   // props: {
   //   item: null
@@ -581,6 +585,7 @@ export default {
     streamMimeType,
     isTachographFile,
     tachoboxUrl,
+    fileKind,
     fileKindMeta,
     hasThumbnail,
     viewerStrategy,

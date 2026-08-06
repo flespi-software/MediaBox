@@ -1,6 +1,6 @@
 {
   "name": "mediabox",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "Vue 3 + Quasar web app for viewing and managing media files from flespi IoT devices",
   "productName": "MediaBox",
   "author": "Evgenij Spitsyn <spev@gurtam.com>",
@@ -34,6 +34,7 @@
     "@quasar/cli": "^2.3.0",
     "@quasar/extras": "^1.16.4",
     "axios": "^1.2.1",
+    "fflate": "^0.8.3",
     "flespi-io-js": "git+https://github.com/flespi-software/flespi-io-js.git#v3",
     "form-data": "^4.0.0",
     "git-directory-deploy": "^1.5.1",
