@@ -58,6 +58,25 @@ function isLiveSource (options) {
   )
 }
 
+// Control-bar toggle: follow the live edge (catch up) or stop and watch from
+// where you are. Added only to players that have a live edge (live stream or a
+// growing EVENT playback). Registered once at module load.
+const VjsButton = videojs.getComponent('Button')
+class CatchupToggle extends VjsButton {
+  handleClick () {
+    if (this.options_.onToggle) this.options_.onToggle()
+  }
+
+  // reflect state: highlighted while following, dimmed while paused-from-edge
+  setFollowing (on) {
+    this.toggleClass('vjs-following', on)
+    this.controlText(on ? 'Following live — click to stop catching up' : 'Catch up to live')
+  }
+}
+if (!videojs.getComponent('CatchupToggle')) {
+  videojs.registerComponent('CatchupToggle', CatchupToggle)
+}
+
 function isFlvSource (options) {
   return options.sources && options.sources.some(s => FLV_TYPES.includes(s.type))
 }
@@ -120,7 +139,13 @@ export default {
       chaserInterval: null,
       latencySettings: null,
       latencyTarget: 0,
-      stallTimer: null
+      stallTimer: null,
+      // whether live controls have been set up (skipped for finite VOD playback)
+      liveStarted: false,
+      // whether we're actively chasing the live edge (user-toggleable)
+      catchupEnabled: false,
+      // the control-bar toggle instance (live-edge players only)
+      catchupBtn: null
     }
   },
   mounted () {
@@ -137,27 +162,95 @@ export default {
       this.$refs.playerContainer.appendChild(el)
 
       const opts = { fill: true, ...buildOptions(this.options) }
-      const live = isLiveSource(this.options)
       this.player = videojs(el, opts, () => {
         this.player.log('onPlayerReady', this)
         this.$emit('ready')
-        if (live) {
-          this.startLatencyChaser()
-          this.player.on('waiting', () => {
-            const s = this.latencySettings || LATENCY.flv
-            this.latencyTarget = Math.min(this.latencyTarget + 0.3, s.max * 0.6)
-            this.player.playbackRate(1.0)
-            this.tryRecoverStall()
-          })
-          this.player.on('playing', () => {
-            this.clearStallTimer()
-          })
+        if (!isLiveSource(this.options)) return
+        // FLV here is always a live stream -> follow the live edge by default.
+        // HLS may be a live stream OR a recorded playback. Both a live and an
+        // EVENT-playback manifest report an infinite duration; only a finite VOD
+        // has no live edge. So defer until the manifest loads: skip finite VOD,
+        // and for the rest default to following only when it's a true live stream
+        // (a playback starts from EXT-X-START and doesn't chase unless asked).
+        if (isFlvSource(this.options)) {
+          this.enableLiveControls(true)
+        } else {
+          const setup = () => {
+            if (this.liveStarted || !this.player) return
+            if (this.player.duration() !== Infinity) return // finite VOD: play from start
+            this.enableLiveControls(this.isLiveHls())
+          }
+          this.player.on('loadedmetadata', setup)
+          this.player.on('durationchange', setup)
         }
       })
+    },
+    // Distinguish a live HLS stream from a recorded playback (VOD). The gateway
+    // marks playback manifests with EXT-X-PLAYLIST-TYPE (VOD/EVENT) and EXT-X-START
+    // (RFC 8216) — so read the parsed manifest: a declared playlistType or a
+    // closed playlist (EXT-X-ENDLIST) means playback. Only a bare sliding-window
+    // playlist (neither) is a true live stream. Duration is a fallback: an EVENT
+    // playback still reports an infinite duration, so the manifest check must win.
+    isLiveHls () {
+      try {
+        const tech = this.player.tech(true)
+        const vhs = tech && (tech.vhs || tech.hls)
+        const media = vhs && vhs.playlists && vhs.playlists.media && vhs.playlists.media()
+        if (media) return !(media.playlistType || media.endList)
+      } catch (e) { /* fall through to the duration heuristic */ }
+      return this.player.duration() === Infinity
+    },
+    // set up live-edge controls: the catch-up toggle + stall recovery. `defaultFollow`
+    // decides the initial state (true live -> follow; EVENT playback -> off). Stall
+    // recovery only kicks in while following, so a paused-from-edge view stays put.
+    enableLiveControls (defaultFollow) {
+      if (this.liveStarted || !this.player) return
+      this.liveStarted = true
+      this.player.on('waiting', () => {
+        if (!this.catchupEnabled) return
+        const s = this.latencySettings || LATENCY.flv
+        this.latencyTarget = Math.min(this.latencyTarget + 0.3, s.max * 0.6)
+        this.player.playbackRate(1.0)
+        this.tryRecoverStall()
+      })
+      this.player.on('playing', () => {
+        this.clearStallTimer()
+      })
+      this.addCatchupToggle()
+      this.setCatchup(defaultFollow)
+    },
+    // add the follow-live toggle to the control bar, before the fullscreen button
+    addCatchupToggle () {
+      const bar = this.player && this.player.controlBar
+      if (!bar || this.catchupBtn) return
+      this.catchupBtn = bar.addChild('CatchupToggle', {
+        className: 'vjs-catchup-toggle',
+        onToggle: () => this.setCatchup(!this.catchupEnabled)
+      })
+      const fs = bar.getChild('fullscreenToggle')
+      if (fs && fs.el() && fs.el().parentNode) {
+        fs.el().parentNode.insertBefore(this.catchupBtn.el(), fs.el())
+      }
+    },
+    // turn live-edge chasing on/off (user toggle). Off: stop chasing, drop back to
+    // 1x and let the viewer stay where they are (scrub/pause the buffered window).
+    setCatchup (on) {
+      this.catchupEnabled = on
+      if (on) {
+        this.startLatencyChaser()
+      } else {
+        this.stopLatencyChaser()
+        this.clearStallTimer()
+        if (this.player) this.player.playbackRate(1.0)
+      }
+      if (this.catchupBtn) this.catchupBtn.setFollowing(on)
     },
     destroyPlayer () {
       this.stopLatencyChaser()
       this.clearStallTimer()
+      this.liveStarted = false
+      this.catchupEnabled = false
+      this.catchupBtn = null // disposed together with the player below
       if (this.player) {
         this.player.dispose()
         this.player = null
@@ -283,3 +376,18 @@ export default {
   }
 }
 </script>
+
+<style lang="sass">
+// follow-live toggle in the video.js control bar (live / EVENT-playback only)
+.vjs-catchup-toggle
+  cursor: pointer
+  .vjs-icon-placeholder::before
+    content: '\2193' // downwards arrow = "jump to live edge"
+    font-size: 1.5em
+    line-height: 1.67
+  // dimmed while not chasing the edge; teal while following
+  opacity: .7
+  &.vjs-following
+    opacity: 1
+    color: #26c6da
+</style>
