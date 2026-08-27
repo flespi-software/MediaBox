@@ -1,12 +1,18 @@
 <template>
-  <div ref="playerContainer" style="width:100%;height:100%"></div>
+  <WebrtcPlayer v-if="isWebrtc" ref="webrtc" :options="options" style="width:100%;height:100%"
+    @ready="$emit('ready')" />
+  <div v-else ref="playerContainer" style="width:100%;height:100%"></div>
 </template>
 
 <script>
 import videojs from 'video.js'
 import 'video.js/dist/video-js.css'
 import '../../../utils/videojs-mpegts-tech'
+import WebrtcPlayer from './webrtc-player.vue'
+import { WEBRTC_MIME } from '../../../utils/media-url'
 
+// WebRTC never reaches video.js - it is played by WebrtcPlayer below
+const WEBRTC_TYPES = [WEBRTC_MIME, 'video/webrtc']
 const HLS_TYPES = ['application/x-mpegURL', 'application/vnd.apple.mpegurl']
 const FLV_TYPES = ['video/x-flv', 'video/flv']
 
@@ -114,8 +120,13 @@ function buildOptions (options) {
   return options
 }
 
+function isWebrtcSource (options) {
+  return (options.sources || []).some(s => WEBRTC_TYPES.includes(s.type))
+}
+
 export default {
   name: 'VideoPlayer',
+  components: { WebrtcPlayer },
   emits: ['ready'],
   props: {
     options: {
@@ -131,6 +142,11 @@ export default {
         this.destroyPlayer()
         this.createPlayer()
       }
+    }
+  },
+  computed: {
+    isWebrtc () {
+      return isWebrtcSource(this.options)
     }
   },
   data () {
@@ -156,6 +172,7 @@ export default {
   },
   methods: {
     createPlayer () {
+      if (this.isWebrtc) return // handled by WebrtcPlayer
       const el = document.createElement('video')
       el.className = 'video-js'
       el.preload = 'none'
@@ -342,10 +359,17 @@ export default {
         }
       }, STALL_TIMEOUT)
     },
+    // the webrtc child exposes the same API - forward to it when it is active
+    delegate (method, ...args) {
+      const w = this.$refs.webrtc
+      return w ? w[method](...args) : undefined
+    },
     play () {
+      if (this.isWebrtc) return this.delegate('play')
       if (this.player) this.player.play()
     },
     pause () {
+      if (this.isWebrtc) return this.delegate('pause')
       if (this.player) this.player.pause()
     },
     // --- imperative helpers for external (synchronized) time control ---
@@ -353,24 +377,31 @@ export default {
     // playback. Recorded mp4 is never a live source, so the latency chaser
     // above never runs and these do not affect live-stream behavior.
     seek (t) {
+      if (this.isWebrtc) return
       if (this.player) this.player.currentTime(t)
     },
     getCurrentTime () {
+      if (this.isWebrtc) return this.delegate('getCurrentTime') || 0
       return this.player ? this.player.currentTime() : 0
     },
     getDuration () {
+      if (this.isWebrtc) return 0
       return this.player ? this.player.duration() : 0
     },
     isPaused () {
+      if (this.isWebrtc) return this.delegate('isPaused')
       return this.player ? this.player.paused() : true
     },
     setRate (r) {
+      if (this.isWebrtc) return
       if (this.player) this.player.playbackRate(r)
     },
     setMuted (m) {
+      if (this.isWebrtc) return this.delegate('setMuted', m)
       if (this.player) this.player.muted(m)
     },
     isReady () {
+      if (this.isWebrtc) return !!this.delegate('isReady')
       return !!this.player
     }
   }

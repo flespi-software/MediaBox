@@ -16,7 +16,8 @@
           sources: [
             {
               src: mediaFileUrl(current),
-              type: current.mime
+              type: current.mime,
+              codec: current.meta.video_codec
             }
           ],
           poster: mediaFileUrl(current, 'preview=jpeg')

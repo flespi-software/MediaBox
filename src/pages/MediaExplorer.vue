@@ -268,6 +268,7 @@
               src: streamSrcUrl(current.mediastream),
               type: streamMimeType(current.mediastream),
               hasAudio: streamHasAudio(current),
+              codec: current.mediastream.video_codec,
             },
           ],
           poster: streamSrcUrl(current.mediastream, 'preview=jpeg'),

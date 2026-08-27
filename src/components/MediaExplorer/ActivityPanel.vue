@@ -316,11 +316,11 @@ export default defineComponent({
     },
     getStreamTypeLabel (type) {
       if (!type) return 'HLS'
-      const labels = { flv: 'FLV', hls: 'HLS' }
+      const labels = { flv: 'FLV', hls: 'HLS', webrtc: 'WebRTC' }
       return labels[type] || type.toUpperCase()
     },
     getStreamTypeColor (type) {
-      const colors = { flv: 'deep-orange', hls: 'teal' }
+      const colors = { flv: 'deep-orange', hls: 'teal', webrtc: 'light-blue' }
       return colors[type] || 'teal'
     },
     getResponseStreamType (response) {

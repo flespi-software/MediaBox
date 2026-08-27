@@ -12,7 +12,7 @@ so device media, upload notifications and command results update in real time.
 ## Features
 
 - 📂 **Media explorer** per device — browse photos and videos in grid or list view
-- 🎬 **Player** — video.js-based playback, including HLS and MPEG-TS live streams
+- 🎬 **Player** — video.js-based playback (HLS, MPEG-TS) plus low-latency WebRTC live streams
 - 🟢 **Live stream wall** — watch multiple device cameras at once
 - 🗓 **Timeline** — visual per-camera timeline of recorded media
 - 🎛 **Device commands** — request photos/videos, start streams, playback, tachograph downloads
@@ -96,7 +96,7 @@ npm run lint
   MQTT subscriptions, timeline), `appearance` (theme color)
 - **flespi-io-js** provides the REST client (`$connector.http`) and MQTT client
   (`$connector.socket`), wired up in `src/boot/flespi-io.js`
-- **video.js** for playback; **mpegts.js** for MPEG-TS live streams
+- **video.js** for playback; **mpegts.js** for MPEG-TS live streams; native **WebRTC** for webrtc streams
 
 Media files are served from `https://media.flespi.io/{uuid}` (region-specific);
 append `?preview=jpeg` for thumbnails.

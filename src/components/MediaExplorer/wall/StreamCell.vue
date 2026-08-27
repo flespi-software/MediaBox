@@ -51,7 +51,8 @@ export default defineComponent({
           {
             src: streamSrcUrl(ms),
             type: streamMimeType(ms),
-            hasAudio: this.streamHasAudio(ms)
+            hasAudio: this.streamHasAudio(ms),
+            codec: ms.video_codec
           }
         ],
         poster: streamSrcUrl(ms, 'preview=jpeg')
