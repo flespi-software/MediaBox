@@ -44,6 +44,14 @@ export function streamSrcUrl (stream, query) {
 }
 
 /**
+ * An audio-only session (start_audiostream) carries no video parameters.
+ * Callers that know the originating command should trust that instead.
+ */
+export function isAudioStream (stream) {
+  return !!stream && !stream.width && !stream.height && !stream.video_codec
+}
+
+/**
  * Get MIME type for a stream based on mediastream.
  */
 export function streamMimeType (stream) {

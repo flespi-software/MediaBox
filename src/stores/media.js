@@ -1,5 +1,6 @@
 import { defineStore } from 'pinia'
 import moment from 'moment'
+import { isAudioStream } from '../utils/media-url'
 
 export const useMediaStore = defineStore('media', {
   state: () => ({
@@ -29,7 +30,7 @@ export const useMediaStore = defineStore('media', {
     mediaDeviceTypes: {},
     timeline: {},
     realtimeList: [],
-    cmds: ['request_video', 'take_photo', 'start_videostream', 'video_timeline', 'playback_video', 'request_tachograph_file', 'start_videostream_batch', 'playback_video_batch'],
+    cmds: ['request_video', 'take_photo', 'start_videostream', 'video_timeline', 'playback_video', 'request_tachograph_file', 'start_videostream_batch', 'playback_video_batch', 'start_audiostream'],
     recentCommandsLimit: 7
   }),
   getters: {
@@ -37,7 +38,8 @@ export const useMediaStore = defineStore('media', {
     streamscount: state => Object.values(state.connections).reduce((n, c) => {
       if (!c.meta) return n
       const list = Array.isArray(c.meta.mediastreams) ? c.meta.mediastreams : (c.meta.mediastream ? [c.meta.mediastream] : [])
-      return n + list.length
+      // audio sessions have no picture - they are not part of the video wall
+      return n + list.filter(ms => !isAudioStream(ms)).length
     }, 0),
     currentEvents: state => state.media[state.selectedDate] || [],
     timelines: state => state.timeline[state.selectedDate] || [],

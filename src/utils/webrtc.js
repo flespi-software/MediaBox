@@ -85,14 +85,15 @@ export function canDecodeCodec (codec) {
 }
 
 /**
- * Open a receive-only WebRTC session on `url`.
+ * Open a WebRTC session on `url`.
  * onStream(MediaStream), onState(state) - state is the pc connection state
  * plus 'signaling' while negotiating and 'failed' on a signaling error.
+ * `video: false` gives an audio-only session (start_audiostream).
  * `mic` (optional MediaStreamTrack) turns the audio transceiver into sendrecv
  * for talkback; without it audio is recvonly.
- * Returns a handle with close().
+ * Returns a handle with close() and setMic() for push-to-talk.
  */
-export function openWebrtcStream (url, { onStream, onState, iceServers, mic, jitterTarget = 0 } = {}) {
+export function openWebrtcStream (url, { onStream, onState, iceServers, mic, video = true, jitterTarget = 0 } = {}) {
   const pc = new RTCPeerConnection({ sdpSemantics: 'unified-plan', iceServers: iceServers || [] })
   const remote = new MediaStream()
   let closed = false
@@ -102,6 +103,8 @@ export function openWebrtcStream (url, { onStream, onState, iceServers, mic, jit
   let clean = 0
   let prevStats = null
   let noDecode = 0
+  let audioSender = null
+  let audioTransceiver = null
 
   const adapt = async () => {
     const cur = await inboundVideoStats(pc)
@@ -144,11 +147,12 @@ export function openWebrtcStream (url, { onStream, onState, iceServers, mic, jit
     }
   })
 
-  pc.addTransceiver('video', { direction: 'recvonly' })
+  if (video) pc.addTransceiver('video', { direction: 'recvonly' })
   if (mic) {
-    pc.addTransceiver(mic, { direction: 'sendrecv' })
+    audioTransceiver = pc.addTransceiver(mic, { direction: 'sendrecv' })
+    audioSender = audioTransceiver.sender
   } else {
-    pc.addTransceiver('audio', { direction: 'recvonly' })
+    audioTransceiver = pc.addTransceiver('audio', { direction: 'recvonly' })
   }
 
   const negotiate = async () => {
@@ -169,7 +173,8 @@ export function openWebrtcStream (url, { onStream, onState, iceServers, mic, jit
     if (closed) return
     await pc.setRemoteDescription(answer)
     setJitterTarget(pc, target)
-    adaptTimer = setInterval(() => { adapt().catch(() => {}) }, ADAPT_INTERVAL)
+    // the adapt loop reads video stats - nothing to watch in an audio session
+    if (video) adaptTimer = setInterval(() => { adapt().catch(() => {}) }, ADAPT_INTERVAL)
   }
 
   const ready = negotiate().catch((e) => {
@@ -185,6 +190,20 @@ export function openWebrtcStream (url, { onStream, onState, iceServers, mic, jit
     ready,
     // current jitter buffer target in ms (adapts to the link)
     jitterTarget: () => target,
+    canTalk: () => !!audioSender,
+    // What the server actually agreed to, known once the answer is applied.
+    // Only one client at a time holds the intercom: everyone else is answered
+    // sendonly and ends up here as a listener, whatever mode they asked for.
+    negotiated: () => {
+      const d = audioTransceiver && audioTransceiver.currentDirection
+      if (!d) return null
+      return { send: d === 'sendrecv' || d === 'sendonly', recv: d === 'sendrecv' || d === 'recvonly', direction: d }
+    },
+    // push-to-talk: replace the track instead of disabling it - a disabled track
+    // still sends silence, which the server reads as the viewer talking
+    setMic (track) {
+      if (audioSender) audioSender.replaceTrack(track || null)
+    },
     close () {
       if (closed) return
       closed = true

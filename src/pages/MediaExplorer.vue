@@ -4,6 +4,7 @@
     <MediaCommand ref="mediacommand" />
     <UploadMedia ref="uploadmedia" />
     <EmbedPlayer ref="embedplayer" />
+    <AudioCall ref="audiocall" :sessions="audioSessions" @stop="stopStream" @switch="openAudioCall" />
     <q-header reveal :class="`bg-${color}-8`">
       <q-toolbar>
         <q-btn-toggle v-model="fileviewtype" class="mb-view-toggle" dense unelevated no-caps spread
@@ -54,6 +55,11 @@
           @click="openStreams(null)" title="Live streams wall">
           <q-badge color="red" floating>{{ streamscount }}</q-badge>
         </q-btn>
+        <q-btn v-if="audioStreams.length" icon="mdi-account-voice" color="teal-4" flat round
+          @click="openAudioCall()">
+          <q-tooltip>Audio session</q-tooltip>
+          <q-badge color="red" floating>{{ audioStreams.length }}</q-badge>
+        </q-btn>
         <q-btn icon="mdi-dock-right" round flat color="white" @click="toggleActivity()">
           <q-tooltip>Activity — connections, requests &amp; uploads</q-tooltip>
         </q-btn>
@@ -94,7 +100,7 @@
           <div class="mb-section-title row items-center no-wrap">
             <q-icon name="mdi-access-point" size="16px" class="q-mr-xs" />Connections
           </div>
-          <ActivityPanel v-if="item" :item="item" @openMedia="openMedia" @embed="embed" @startStream="startStream" @requestPlayback="getPlaybackByTimeline" @openStreams="openStreams" />
+          <ActivityPanel v-if="item" :item="item" @openMedia="openMedia" @embed="embed" @startStream="startStream" @requestPlayback="getPlaybackByTimeline" @openStreams="openStreams" @openAudio="openAudioStream" />
           <div class="mb-section-title row items-center no-wrap">
             <q-icon name="mdi-tray-arrow-down" size="16px" class="q-mr-xs" />Last uploads
           </div>
@@ -362,7 +368,9 @@ import ActivityPanel from '../components/MediaExplorer/ActivityPanel.vue'
 import StreamWall from '../components/MediaExplorer/StreamWall.vue'
 import CameraWall from '../components/MediaExplorer/camera-wall/CameraWall.vue'
 import ArchiveViewer from '../components/MediaExplorer/ArchiveViewer.vue'
-import { mediaFileUrl, streamSrcUrl, streamMimeType } from '../utils/media-url'
+import AudioCall from '../components/MediaExplorer/AudioCall.vue'
+import { mediaFileUrl, streamSrcUrl, streamMimeType, isAudioStream } from '../utils/media-url'
+import { audioModeOfStream } from '../utils/audio-mode'
 import { isTachographFile, tachoboxUrl } from '../utils/tachograph-url'
 import { fileKind, fileKindMeta, hasThumbnail, viewerStrategy } from '../utils/file-type'
 
@@ -378,7 +386,8 @@ export default {
     CameraWall,
     MediaCommand,
     UploadMedia,
-    ArchiveViewer
+    ArchiveViewer,
+    AudioCall
   },
   // props: {
   //   item: null
@@ -418,6 +427,7 @@ export default {
       cmdtimeline: null,
       cmdstreambatch: null,
       cmdplaybackbatch: null,
+      cmdaudio: null,
 
       pagination: {
         rowsPerPage: 0
@@ -483,9 +493,8 @@ export default {
       commands: store => store.commands,
       connections: store => store.connections
     }),
-    activeStreams () {
-      // a connection may carry several streams (batch) in meta.mediastreams;
-      // flatten to one entry per stream so the wall shows them all
+    // every session on the device, video and audio alike
+    allStreams () {
       const out = []
       Object.entries(this.connections || {}).forEach(([id, c]) => {
         if (!c.meta) return
@@ -503,6 +512,22 @@ export default {
       })
       return out.sort((a, b) => (a.established || 0) - (b.established || 0))
     },
+    // a connection may carry several streams (batch) in meta.mediastreams; the
+    // wall shows the video ones, audio sessions get the call panel instead
+    activeStreams () {
+      return this.allStreams.filter(s => !isAudioStream(s.meta.mediastream))
+    },
+    audioStreams () {
+      return this.allStreams.filter(s => isAudioStream(s.meta.mediastream))
+    },
+    // the switcher list: one entry per live audio session, mode resolved
+    audioSessions () {
+      return this.audioStreams.map((s) => {
+        const ms = s.meta.mediastream
+        const { mode, channel } = this.audioModeOf(ms)
+        return { uuid: ms.uuid, connectionId: s.connectionId, established: s.established, mode, channel, entry: s }
+      })
+    },
     // streams shown in the wall: all, or just one connection's (opened from its Play)
     wallStreams () {
       return this.wallConnectionId
@@ -518,6 +543,7 @@ export default {
       if (this.cmdstream) a.push({ key: 'stream', cls: 'mb-act-stream', icon: 'mdi-video-wireless', label: 'Live', title: 'Start stream', fn: () => this.startStream({}) })
       if (this.cmdplayback) a.push({ key: 'playback', cls: 'mb-act-playback', icon: 'mdi-history', label: 'Playback', title: 'Playback', fn: () => this.playbackVideo({}) })
       if (this.cmdtimeline) a.push({ key: 'timeline', cls: 'mb-act-timeline', icon: 'mdi-chart-timeline', label: 'Timeline', title: 'Request timeline', fn: () => this.getTimeline({}) })
+      if (this.cmdaudio) a.push({ key: 'audio', cls: 'mb-act-audio', icon: 'mdi-account-voice', label: 'Audio', title: 'Start an audio session (listen / intercom / broadcast)', fn: () => this.startAudio({}) })
       if (this.tachoEnabled) a.push({ key: 'tacho', cls: 'mb-act-tacho', icon: 'mdi-smart-card-reader', label: 'Tacho', title: 'Request tachograph file', divider: true, fn: () => this.getTacho({}) })
       // Streamax multi-channel commands, grouped in one dropdown
       const batch = []
@@ -569,6 +595,17 @@ export default {
     },
     '$route.params.deviceid': function () {
       this.init()
+    },
+    // A session started here opens its call panel by itself. Connections arrive
+    // over MQTT on every client watching the device, so match the command id to
+    // avoid popping the dialog up for operators who did not ask for it - they
+    // still see the session in the toolbar badge and the activity panel.
+    audioStreams (list, old) {
+      if (list.length <= ((old && old.length) || 0)) return
+      const fresh = list[list.length - 1]
+      if (!this.commandids[fresh.meta.mediastream.command_id]) return
+      const panel = this.$refs.audiocall
+      if (panel && !panel.open) this.openAudioCall(fresh)
     }
   },
   mounted () {
@@ -791,6 +828,7 @@ export default {
         this.cmdtimeline = response.data.result[0].commands.find(com => com.name === 'video_timeline')
         this.cmdstreambatch = response.data.result[0].commands.find(com => com.name === 'start_videostream_batch')
         this.cmdplaybackbatch = response.data.result[0].commands.find(com => com.name === 'playback_video_batch')
+        this.cmdaudio = response.data.result[0].commands.find(com => com.name === 'start_audiostream')
       } else {
         this.cmdvideo = undefined
         this.cmdphoto = undefined
@@ -800,6 +838,7 @@ export default {
         this.cmdtimeline = undefined
         this.cmdstreambatch = undefined
         this.cmdplaybackbatch = undefined
+        this.cmdaudio = undefined
       }
     },
 
@@ -860,6 +899,39 @@ export default {
         // this.$root.$emit('openDialogStack', { dialog_type: 'mediarequest', title: 'Send media request', back: false, item: this.item, item_type: 'devices', command: this.cmdvideo, cb: this.setCommandID, payload: { from: Math.floor(d.getTime() / 1000) } })
         this.$refs.mediacommand.open(this.item.id, this.cmdstream, { mediastream: 'hls', ...data }, this.setCommandID)
       }
+    },
+
+    startAudio (data) {
+      if (this.cmdaudio) {
+        this.$refs.mediacommand.open(this.item.id, this.cmdaudio, { channel: 1, type: 1, ...data }, this.setCommandID)
+      }
+    },
+    audioModeOf (ms) {
+      const { type, channel } = audioModeOfStream(ms, this.commands)
+      return { mode: type, channel }
+    },
+    // from the activity panel: open the call for one audio mediastream
+    openAudioStream (ms) {
+      const found = this.audioStreams.find(s => s.meta.mediastream.uuid === ms.uuid)
+      this.openAudioCall(found || { meta: { mediastream: ms } })
+    },
+    // no argument: the most recent session (the toolbar button)
+    openAudioCall (stream) {
+      const list = this.audioStreams
+      const target = stream || list[list.length - 1]
+      const ms = target && target.meta && target.meta.mediastream
+      if (!ms) return
+      const panel = this.$refs.audiocall
+      // already on this call - do not tear a live connection down
+      if (panel.open && panel.uuid === ms.uuid) return
+      const { mode, channel } = this.audioModeOf(ms)
+      panel.start({
+        url: streamSrcUrl(ms),
+        uuid: ms.uuid,
+        connectionId: target.connectionId,
+        mode,
+        channel
+      })
     },
 
     playbackVideo (data) {
@@ -1043,6 +1115,8 @@ export default {
   color: #9bb0c2
 .mb-act-tacho .q-icon
   color: #b9a0db
+.mb-act-audio .q-icon
+  color: #6fd3d8
 
 .mb-action-divider
   width: 1px

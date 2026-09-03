@@ -3,12 +3,17 @@
   <template v-for="(c) in connections" :key="c.id">
     <q-item :clickable="!!c.meta" @click="() => { if (isStream(c)) onConnClick(c); else if (c.meta) $emit('openMedia', c.meta) }">
       <q-item-section avatar style="padding-right:10px;min-width:30px;">
-        <q-icon name="mdi-video-wireless" v-if="isStream(c)" />
+        <q-icon v-if="isAudio(c)" :name="connAudioMode(c).icon" :color="connAudioMode(c).color" />
+        <q-icon name="mdi-video-wireless" v-else-if="isStream(c)" />
         <q-icon name="mdi-multimedia" v-else-if="c.secondary" />
         <q-icon name="mdi-developer-board" v-else />
       </q-item-section>
       <q-item-section>
-        <q-item-label overline v-if="isStream(c)">Stream started
+        <q-item-label overline v-if="isAudio(c)">Audio session
+          <q-badge :color="connAudioMode(c).color" :text-color="connAudioMode(c).textColor"
+            class="q-ml-xs stream-type-badge">{{ connAudioMode(c).label }}</q-badge>
+        </q-item-label>
+        <q-item-label overline v-else-if="isStream(c)">Stream started
           <q-badge :color="getStreamTypeColor(streamsOf(c)[0].mediastream || streamsOf(c)[0].stream_type)" class="q-ml-xs stream-type-badge">{{ getStreamTypeLabel(streamsOf(c)[0].mediastream || streamsOf(c)[0].stream_type) }}</q-badge>
           <span v-if="streamsOf(c).length > 1" class="q-ml-xs text-blue-grey-4">· {{ streamsOf(c).length }} ch</span>
         </q-item-label>
@@ -19,15 +24,15 @@
           0) }}</q-item-label>
       </q-item-section>
       <q-item-section side v-if="isStream(c)" style="padding-left:10px;min-width:30px;">
-        <q-btn size="sm" color="white" flat dense round icon="mdi-play" title="Play stream"
-          @click.stop="onConnClick(c)" />
+        <q-btn size="sm" color="white" flat dense round :icon="isAudio(c) ? 'mdi-headphones' : 'mdi-play'"
+          :title="isAudio(c) ? 'Open audio session' : 'Play stream'" @click.stop="onConnClick(c)" />
       </q-item-section>
       <q-item-section side style="padding-left:10px;min-width:30px;">
         <q-btn size="sm" color="red-4" flat dense round icon="mdi-network-off-outline" title="Drop connection"
           @click.stop="dropConnection(c.id)" />
       </q-item-section>
     </q-item>
-    <div v-if="isStream(c)" class="q-px-md q-pb-sm">
+    <div v-if="isStream(c) && !isAudio(c)" class="q-px-md q-pb-sm">
       <div class="mb-conn-streams" :class="{ 'mb-conn-streams-multi': streamsOf(c).length > 1 }">
         <div v-for="ms in streamsOf(c)" :key="ms.uuid" class="mb-conn-stream">
           <img :src="streamSrcUrl(ms, 'preview=jpeg')" class="mb-conn-preview" @click="playStream(ms)" />
@@ -50,13 +55,16 @@
       <q-item dense class="command-item"
         :clickable="canApplyTimeline(cmd) || canOpenAsFile(cmd)" @click="onCommandItemClick(cmd)">
         <q-item-section avatar class="mb-cmd-avatar">
-          <q-icon :name="getCommandIcon(cmd.name)" :color="getCommandIconColor(cmd.name)" size="20px" />
+          <q-icon :name="commandIcon(cmd)" :color="commandIconColor(cmd)" size="20px" />
         </q-item-section>
         <q-item-section>
           <q-item-label class="command-label row items-center no-wrap">
             <span class="ellipsis">{{ getCommandLabel(cmd.name) }}</span>
             <q-badge v-if="cmd.response && ['start_videostream', 'playback_video', 'start_videostream_batch', 'playback_video_batch'].includes(cmd.name) && getResponseStreamType(cmd.response)"
               :color="getStreamTypeColor(getResponseStreamType(cmd.response))" class="stream-type-badge q-ml-xs">{{ getStreamTypeLabel(getResponseStreamType(cmd.response)) }}</q-badge>
+            <q-badge v-else-if="cmd.name === 'start_audiostream'" :color="audioMode(cmd.properties.type).color"
+              :text-color="audioMode(cmd.properties.type).textColor"
+              class="stream-type-badge q-ml-xs">{{ audioMode(cmd.properties.type).label }}</q-badge>
             <span v-if="Array.isArray(cmd.response) && cmd.response.length > 1" class="q-ml-xs text-blue-grey-4" style="font-size:.68rem">{{ cmd.response.length }} ch</span>
           </q-item-label>
           <q-item-label caption class="ellipsis"
@@ -79,11 +87,15 @@
             @click.stop="$refs.timelineViewer.open(cmd)" title="View details" />
         </q-item-section>
         <q-item-section side>
-          <q-badge :color="getStatusColor(cmd.action)" :label="getStatusLabel(cmd.action)" class="status-badge">
+          <q-badge v-if="cmdFailed(cmd)" color="red" label="Failed" class="status-badge">
+            <q-icon name="mdi-alert-circle-outline" size="12px" class="q-ml-xs" />
+            <q-tooltip v-if="cmdError(cmd)">{{ cmdError(cmd) }}</q-tooltip>
+          </q-badge>
+          <q-badge v-else :color="getStatusColor(cmd.action)" :label="getStatusLabel(cmd.action)" class="status-badge">
             <q-spinner-dots v-if="cmd.action === 'queued' || cmd.action === 'sent'" size="12px" class="q-ml-xs" />
             <q-icon v-else-if="cmd.action === 'processed'" name="mdi-check" size="12px" class="q-ml-xs" />
             <q-icon v-else-if="cmd.action === 'canceled'" name="mdi-close" size="12px" class="q-ml-xs" />
-            <q-icon v-else-if="cmd.action === 'expire'" name="mdi-timer-off" size="12px" class="q-ml-xs" />
+            <q-icon v-else-if="cmd.action === 'expired'" name="mdi-timer-off" size="12px" class="q-ml-xs" />
           </q-badge>
         </q-item-section>
       </q-item>
@@ -105,7 +117,8 @@ import moment from 'moment'
 // import MediaPlayer from './player/player.vue'
 import { useAuthStore } from '../../stores/auth'
 import { useMediaStore } from '../../stores/media'
-import { streamSrcUrl } from '../../utils/media-url'
+import { streamSrcUrl, isAudioStream } from '../../utils/media-url'
+import { audioMode, audioModeOfStream } from '../../utils/audio-mode'
 import TimelineResultViewer from './timeline/TimelineResultViewer.vue'
 
 export default defineComponent({
@@ -116,7 +129,7 @@ export default defineComponent({
   props: {
     item: null
   },
-  emits: ['openMedia', 'embed', 'startStream', 'requestPlayback', 'openStreams'],
+  emits: ['openMedia', 'embed', 'startStream', 'requestPlayback', 'openStreams', 'openAudio'],
   data () {
     return {
       interval: null,
@@ -159,13 +172,19 @@ export default defineComponent({
     isStream (c) {
       return this.streamsOf(c).length > 0
     },
+    // an audio session has no picture - it belongs to the call panel
+    isAudio (c) {
+      const list = this.streamsOf(c)
+      return list.length > 0 && list.every(isAudioStream)
+    },
     // one preview -> that stream fullscreen
     playStream (ms) {
       this.$emit('openMedia', { mediastream: ms })
     },
     // header play / row -> the wall showing just this connection's streams
     onConnClick (c) {
-      this.$emit('openStreams', c.id)
+      if (this.isAudio(c)) this.$emit('openAudio', this.streamsOf(c)[0])
+      else this.$emit('openStreams', c.id)
     },
     // live connection matching a stream command's response (single or batch array),
     // or null once the stream ended and its connection is gone
@@ -178,7 +197,9 @@ export default defineComponent({
     },
     playCommand (cmd) {
       const conn = this.streamConnection(cmd)
-      if (conn) this.$emit('openStreams', conn.id)
+      if (!conn) return
+      if (this.isAudio(conn)) this.$emit('openAudio', this.streamsOf(conn)[0])
+      else this.$emit('openStreams', conn.id)
     },
     canOpenAsFile (cmd) {
       return (cmd.name === 'request_video' || cmd.name === 'request_tachograph_file') &&
@@ -202,6 +223,7 @@ export default defineComponent({
       }
     },
     streamSrcUrl,
+    isAudioStream,
     formatAgo (unixtime) {
       // compact relative time (e.g. "now", "5s ago", "3m ago") so it fits the
       // narrow activity panel — moment's fromNow() ("a few seconds ago") is too long
@@ -274,7 +296,8 @@ export default defineComponent({
         video_timeline: 'Timeline',
         request_tachograph_file: 'Tachograph',
         start_videostream_batch: 'Live Stream (batch)',
-        playback_video_batch: 'Playback (batch)'
+        playback_video_batch: 'Playback (batch)',
+        start_audiostream: 'Audio Session'
       }
       return labels[name] || name
     },
@@ -287,7 +310,8 @@ export default defineComponent({
         video_timeline: 'mdi-chart-timeline',
         request_tachograph_file: 'mdi-file-document',
         start_videostream_batch: 'mdi-video-wireless',
-        playback_video_batch: 'mdi-video-wireless'
+        playback_video_batch: 'mdi-video-wireless',
+        start_audiostream: 'mdi-account-voice'
       }
       return icons[name] || 'mdi-remote'
     },
@@ -300,7 +324,8 @@ export default defineComponent({
         video_timeline: 'grey-5',
         request_tachograph_file: 'purple',
         start_videostream_batch: 'green',
-        playback_video_batch: 'red'
+        playback_video_batch: 'red',
+        start_audiostream: 'teal'
       }
       return colors[name] || 'white'
     },
@@ -310,9 +335,23 @@ export default defineComponent({
         sent: 'blue',
         processed: 'green',
         canceled: 'grey',
-        expire: 'red'
+        expired: 'red'
       }
       return colors[action] || 'grey'
+    },
+    audioMode,
+    // the mode a running audio session was started in
+    connAudioMode (c) {
+      return audioMode(audioModeOfStream(this.streamsOf(c)[0] || {}, this.commands).type)
+    },
+    // audio sessions are told apart by mode, everything else by command name
+    commandIcon (cmd) {
+      if (cmd.name === 'start_audiostream') return audioMode(cmd.properties.type).icon
+      return this.getCommandIcon(cmd.name)
+    },
+    commandIconColor (cmd) {
+      if (cmd.name === 'start_audiostream') return audioMode(cmd.properties.type).color
+      return this.getCommandIconColor(cmd.name)
     },
     getStreamTypeLabel (type) {
       if (!type) return 'HLS'
@@ -333,13 +372,23 @@ export default defineComponent({
       if (r.url) return 'hls'
       return null
     },
+    // the device rejected the command (e.g. a second audio session: "device busy")
+    cmdFailed (cmd) {
+      return cmd.executed === false
+    },
+    // the device reply is free-form, so show it as it came instead of parsing it
+    cmdError (cmd) {
+      const r = cmd.response
+      if (r === undefined || r === null || r === '') return null
+      return typeof r === 'string' ? r : JSON.stringify(r)
+    },
     getStatusLabel (action) {
       const labels = {
         queued: 'Queued',
         sent: 'Sent',
         processed: 'Done',
         canceled: 'Canceled',
-        expire: 'Expired'
+        expired: 'Expired'
       }
       return labels[action] || action
     }
