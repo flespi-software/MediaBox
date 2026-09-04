@@ -42,11 +42,12 @@
                   {{ duck === 0 ? 'vehicle muted' : `vehicle at ${duck}%` }} - louder means you may
                   hear your own voice back through the device speaker
                 </div>
-                <div class="text-caption text-grey-4 q-mt-md">Release tail</div>
-                <q-slider v-model="echoTail" :min="0" :max="2000" :step="50" dense color="teal-4" class="q-mt-sm" />
+                <div class="text-caption text-grey-4 q-mt-md">Hold after release</div>
+                <q-slider v-model="tail" :min="0" :max="2000" :step="50" dense color="teal-4" class="q-mt-sm" />
                 <div class="text-caption text-grey-6">
-                  {{ echoTail }} ms - how long the suppression is held after you let go, to cover
-                  the audio still in flight
+                  {{ tail === 0 ? 'off - sending stops at once' : `${tail} ms` }} - keeps sending
+                  silence so the device player drains what it already got, and keeps the vehicle
+                  suppressed meanwhile, so neither the tail in flight nor the stale buffer comes back
                 </div>
               </div>
             </q-menu>
@@ -137,6 +138,9 @@ const BAR = 3
 const SCOPE_KEEP = 400
 // the scope floor: quiet speech should still show, so bars are drawn in dB
 const SCOPE_FLOOR_DB = -60
+const SCOPE_RX = '#26c6da'
+const SCOPE_SILENT = '#78909c'
+const SCOPE_TX = '#ef5350'
 const BOOST_PREF = 'mediabox.audioCall.boost'
 const DUCK_PREF = 'mediabox.audioCall.duck'
 const TAIL_PREF = 'mediabox.audioCall.tail'
@@ -168,7 +172,10 @@ export default defineComponent({
       boost: LocalStorage.getItem(BOOST_PREF) || 100,
       // how much of the vehicle audio survives while we transmit, 0 = muted
       duck: LocalStorage.getItem(DUCK_PREF) === null ? 0 : LocalStorage.getItem(DUCK_PREF),
-      echoTail: LocalStorage.getItem(TAIL_PREF) === null ? ECHO_TAIL : LocalStorage.getItem(TAIL_PREF),
+      // one window after release: silence still goes out, the vehicle stays down
+      tail: LocalStorage.getItem(TAIL_PREF) === null ? ECHO_TAIL : LocalStorage.getItem(TAIL_PREF),
+      silence: null,
+      tailTimer: null,
       boosted: false,
       outGain: null,
       echoMuted: false,
@@ -178,19 +185,24 @@ export default defineComponent({
       muted: false,
       level: 0,
       levels: [],
+      // whether each sample was audible, so the scope can grey out the gaps
+      silences: [],
       micLevel: 0,
       micLevels: [],
       lastSample: 0,
       audioCtx: null,
       analyser: null,
       micAnalyser: null,
-      levelRaf: null,
-      echoTimer: null
+      levelRaf: null
     }
   },
   computed: {
     connected () {
       return this.status === 'connected'
+    },
+    // nothing from the vehicle reaches the speakers right now
+    silenced () {
+      return this.muted || (this.echoMuted && this.duck === 0)
     },
     // switching leaves the other sessions running on the device
     canSwitch () {
@@ -243,7 +255,7 @@ export default defineComponent({
       LocalStorage.set(DUCK_PREF, v)
       this.applyOutput()
     },
-    echoTail (v) {
+    tail (v) {
       LocalStorage.set(TAIL_PREF, v)
     },
     openMic (v) {
@@ -376,10 +388,12 @@ export default defineComponent({
         this.analyser = ctx.createAnalyser()
         this.analyser.fftSize = 512
         src.connect(comp)
+        // the scope taps the signal here, ahead of the volume control: while echo
+        // suppression holds the speakers down the bars keep drawing
+        comp.connect(this.analyser)
         comp.connect(this.outGain)
         this.outGain.connect(limiter)
-        limiter.connect(this.analyser)
-        this.analyser.connect(ctx.destination)
+        limiter.connect(ctx.destination)
         this.boosted = true
         this.applyOutput()
         const el = this.$refs.audio
@@ -426,7 +440,8 @@ export default defineComponent({
           this.micLevel = Math.max(sending, this.micLevel * LEVEL_DECAY)
           if (!this.lastSample || now - this.lastSample >= SCOPE_MS) {
             this.lastSample = now
-            this.push(this.levels, this.level)
+            this.push(this.levels, Math.min(1, this.level * this.boost / 100))
+            this.push(this.silences, this.silenced)
             this.push(this.micLevels, this.micLevel)
             this.drawScope()
           }
@@ -473,20 +488,26 @@ export default defineComponent({
       const half = mid - 1
       ctx.fillStyle = 'rgba(255, 255, 255, .12)'
       ctx.fillRect(0, mid, w, 1)
-      const trace = (levels, color, up) => {
+      // colorAt lets the incoming trace grey out the moments we could not hear
+      const trace = (levels, up, colorAt) => {
         const start = Math.max(0, levels.length - count)
-        ctx.fillStyle = color
+        let painted = null
         for (let i = start; i < levels.length; i++) {
           const bh = Math.max(levels[i] > 0.005 ? 1 : 0, this.scale(levels[i]) * half)
           if (!bh) continue
+          const color = colorAt(i)
+          if (color !== painted) {
+            ctx.fillStyle = color
+            painted = color
+          }
           const x = w - (levels.length - i) * BAR
           ctx.globalAlpha = 0.3 + 0.7 * ((i - start) / Math.max(1, count))
           ctx.fillRect(x, up ? mid - bh : mid + 1, BAR - 1, bh)
         }
         ctx.globalAlpha = 1
       }
-      trace(this.levels, '#26c6da', true)
-      trace(this.micLevels, '#ef5350', false)
+      trace(this.levels, true, i => (this.silences[i] ? SCOPE_SILENT : SCOPE_RX))
+      trace(this.micLevels, false, () => SCOPE_TX)
     },
     startTalk () {
       if (this.openMic || !this.connected) return
@@ -496,19 +517,32 @@ export default defineComponent({
     setTalking (on) {
       if (!this.session || !this.session.canTalk()) return
       this.talking = on
-      this.session.setMic(on ? this.micTrack : null)
-      if (this.openMic) return
-      this.clearEcho()
+      this.clearTail()
       if (on) {
-        this.echoMuted = true
-        this.applyOutput()
-      } else {
-        this.echoTimer = setTimeout(() => {
-          this.echoMuted = false
-          this.applyOutput()
-          this.echoTimer = null
-        }, this.echoTail)
+        this.session.setMic(this.micTrack)
+        this.suppress(true)
+        return
       }
+      // Released. Cutting the stream dead can leave the device player holding the
+      // last words until packets resume, so for the hold we keep sending silence
+      // and keep the vehicle down - the same window covers both.
+      const hold = this.tail > 0
+      this.session.setMic(hold ? this.silentTrack() : null)
+      if (!hold) {
+        this.suppress(false)
+        return
+      }
+      this.tailTimer = setTimeout(() => {
+        if (this.session) this.session.setMic(null)
+        this.suppress(false)
+        this.tailTimer = null
+      }, this.tail)
+    },
+    // open mic never ducks: the operator chose to keep the line open
+    suppress (on) {
+      if (this.openMic) return
+      this.echoMuted = on
+      this.applyOutput()
     },
     // leaving the panel only drops our end; hanging up ends the session, so the
     // device does not keep an open microphone until the command TTL runs out
@@ -529,16 +563,28 @@ export default defineComponent({
       this.micTrack = null
       this.micError = null
     },
-    clearEcho () {
-      if (this.echoTimer) {
-        clearTimeout(this.echoTimer)
-        this.echoTimer = null
+    // a track that carries nothing: a destination node with no input
+    silentTrack () {
+      if (this.silence) return this.silence
+      const ctx = this.ctx()
+      if (!ctx) return null
+      this.silence = ctx.createMediaStreamDestination().stream.getAudioTracks()[0] || null
+      return this.silence
+    },
+    clearTail () {
+      if (this.tailTimer) {
+        clearTimeout(this.tailTimer)
+        this.tailTimer = null
       }
     },
     stop () {
       window.removeEventListener('pointerup', this.onPointerUp)
       window.removeEventListener('pointercancel', this.onPointerUp)
-      this.clearEcho()
+      this.clearTail()
+      if (this.silence) {
+        this.silence.stop()
+        this.silence = null
+      }
       if (this.levelRaf) {
         cancelAnimationFrame(this.levelRaf)
         this.levelRaf = null
@@ -568,6 +614,7 @@ export default defineComponent({
       this.talking = false
       this.level = 0
       this.levels = []
+      this.silences = []
       this.micLevel = 0
       this.micLevels = []
       this.lastSample = 0
