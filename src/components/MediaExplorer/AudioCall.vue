@@ -31,6 +31,26 @@
         <div class="row items-center no-wrap">
           <span class="ac-dot" :class="stateClass" />
           <span class="text-caption text-grey-4">{{ stateLabel }}</span>
+          <q-btn v-if="canTalk" flat round dense size="sm" icon="mdi-cog-outline" color="blue-grey-4"
+            class="q-ml-sm">
+            <q-tooltip>Echo suppression while you talk</q-tooltip>
+            <q-menu anchor="bottom right" self="top right">
+              <div class="q-pa-md" style="width:280px">
+                <div class="text-caption text-grey-4">While transmitting</div>
+                <q-slider v-model="duck" :min="0" :max="100" :step="10" dense color="teal-4" class="q-mt-sm" />
+                <div class="text-caption text-grey-6">
+                  {{ duck === 0 ? 'vehicle muted' : `vehicle at ${duck}%` }} - louder means you may
+                  hear your own voice back through the device speaker
+                </div>
+                <div class="text-caption text-grey-4 q-mt-md">Release tail</div>
+                <q-slider v-model="echoTail" :min="0" :max="2000" :step="50" dense color="teal-4" class="q-mt-sm" />
+                <div class="text-caption text-grey-6">
+                  {{ echoTail }} ms - how long the suppression is held after you let go, to cover
+                  the audio still in flight
+                </div>
+              </div>
+            </q-menu>
+          </q-btn>
           <q-btn flat round dense size="sm" icon="mdi-close" color="blue-grey-4" class="q-ml-sm"
             @click="open = false">
             <q-tooltip>Close the panel - the session keeps running on the device</q-tooltip>
@@ -118,6 +138,8 @@ const SCOPE_KEEP = 400
 // the scope floor: quiet speech should still show, so bars are drawn in dB
 const SCOPE_FLOOR_DB = -60
 const BOOST_PREF = 'mediabox.audioCall.boost'
+const DUCK_PREF = 'mediabox.audioCall.duck'
+const TAIL_PREF = 'mediabox.audioCall.tail'
 
 export default defineComponent({
   name: 'AudioCall',
@@ -144,6 +166,9 @@ export default defineComponent({
       micError: null,
       openMic: false,
       boost: LocalStorage.getItem(BOOST_PREF) || 100,
+      // how much of the vehicle audio survives while we transmit, 0 = muted
+      duck: LocalStorage.getItem(DUCK_PREF) === null ? 0 : LocalStorage.getItem(DUCK_PREF),
+      echoTail: LocalStorage.getItem(TAIL_PREF) === null ? ECHO_TAIL : LocalStorage.getItem(TAIL_PREF),
       boosted: false,
       outGain: null,
       echoMuted: false,
@@ -213,6 +238,13 @@ export default defineComponent({
     boost (v) {
       LocalStorage.set(BOOST_PREF, v)
       this.applyOutput()
+    },
+    duck (v) {
+      LocalStorage.set(DUCK_PREF, v)
+      this.applyOutput()
+    },
+    echoTail (v) {
+      LocalStorage.set(TAIL_PREF, v)
     },
     openMic (v) {
       // open mic keeps the track on the sender; PTT hands it over only while held
@@ -361,13 +393,14 @@ export default defineComponent({
     },
     // one place deciding what actually reaches the speakers
     applyOutput () {
-      const silent = this.muted || this.echoMuted
+      const level = this.muted ? 0 : (this.echoMuted ? this.duck / 100 : 1)
       if (this.boosted && this.outGain) {
-        this.outGain.gain.value = silent ? 0 : this.boost / 100
+        this.outGain.gain.value = level * this.boost / 100
         return
       }
+      // without WebAudio the element can only be on or off
       const el = this.$refs.audio
-      if (el) el.muted = silent
+      if (el) el.muted = level === 0
     },
     // an analyser on a stream, sharing one audio context
     analyserFor (stream) {
@@ -474,7 +507,7 @@ export default defineComponent({
           this.echoMuted = false
           this.applyOutput()
           this.echoTimer = null
-        }, ECHO_TAIL)
+        }, this.echoTail)
       }
     },
     // leaving the panel only drops our end; hanging up ends the session, so the
