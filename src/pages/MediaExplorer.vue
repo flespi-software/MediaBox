@@ -4,7 +4,8 @@
     <MediaCommand ref="mediacommand" />
     <UploadMedia ref="uploadmedia" />
     <EmbedPlayer ref="embedplayer" />
-    <AudioCall ref="audiocall" :sessions="audioSessions" @stop="stopStream" @switch="openAudioCall" />
+    <AudioCall ref="audiocall" :sessions="audioSessions" :device-type="item && item.device_type_id"
+      @stop="stopStream" @switch="openAudioCall" />
     <q-header reveal :class="`bg-${color}-8`">
       <q-toolbar>
         <q-btn-toggle v-model="fileviewtype" class="mb-view-toggle" dense unelevated no-caps spread
@@ -984,6 +985,13 @@ export default {
 // --- Right drawer (connections / uploads) ---------------------------
 .mb-drawer
   background: #1b2026
+
+// A scroll area sizes itself to the intrinsic width of its content, and an
+// ellipsis does not shrink that - so one long file name in the uploads list used
+// to stretch the drawer and give it a horizontal scrollbar. Pin the content to
+// the container and let the ellipsis do its job.
+.q-drawer--right .q-scrollarea__content
+  max-width: 100%
 
 .mb-drawer-header
   flex: 0 0 auto

@@ -36,6 +36,14 @@
             <q-tooltip>Echo suppression while you talk</q-tooltip>
             <q-menu anchor="bottom right" self="top right">
               <div class="q-pa-md" style="width:280px">
+                <div class="text-caption text-grey-6 q-mb-sm">Saved for this device type</div>
+
+                <q-toggle v-model="keepOpen" dense size="sm" color="teal-4" label="Keep the line open" />
+                <div class="text-caption text-grey-6 q-mb-md">
+                  silence keeps going out between transmissions, so the device player never stalls
+                  with the last words still in its buffer - costs roughly 9 MB per idle hour
+                </div>
+
                 <div class="text-caption text-grey-4">While transmitting</div>
                 <q-slider v-model="duck" :min="0" :max="100" :step="10" dense color="teal-4" class="q-mt-sm" />
                 <div class="text-caption text-grey-6">
@@ -45,9 +53,9 @@
                 <div class="text-caption text-grey-4 q-mt-md">Hold after release</div>
                 <q-slider v-model="tail" :min="0" :max="2000" :step="50" dense color="teal-4" class="q-mt-sm" />
                 <div class="text-caption text-grey-6">
-                  {{ tail === 0 ? 'off - sending stops at once' : `${tail} ms` }} - keeps sending
-                  silence so the device player drains what it already got, and keeps the vehicle
-                  suppressed meanwhile, so neither the tail in flight nor the stale buffer comes back
+                  {{ tail === 0 ? 'off - the vehicle comes back at once' : `${tail} ms` }} - how long
+                  the vehicle stays suppressed after you let go, to cover your own voice still
+                  looping back through the device speaker
                 </div>
               </div>
             </q-menu>
@@ -128,9 +136,10 @@ import { openWebrtcStream, isWebrtcSupported } from '../../utils/webrtc'
 import { LocalStorage } from 'quasar'
 import { audioMode, LISTENING, BROADCAST } from '../../utils/audio-mode'
 
-// the device audio stays muted this long past release, so the tail of our own
-// voice - played by the device speaker back into its microphone - does not loop
-const ECHO_TAIL = 300
+// How long the vehicle stays suppressed after release, so our own voice, played by
+// the device speaker into its microphone, does not loop back. The default matches the
+// 1.2s the device buffers: that is how far behind our voice can still be.
+const ECHO_TAIL = 1200
 const LEVEL_DECAY = 0.6
 // one bar per SCOPE_MS, BAR px wide - together about ten seconds of history
 const SCOPE_MS = 80
@@ -141,9 +150,16 @@ const SCOPE_FLOOR_DB = -60
 const SCOPE_RX = '#26c6da'
 const SCOPE_SILENT = '#78909c'
 const SCOPE_TX = '#ef5350'
-const BOOST_PREF = 'mediabox.audioCall.boost'
-const DUCK_PREF = 'mediabox.audioCall.duck'
-const TAIL_PREF = 'mediabox.audioCall.tail'
+// Buffer depth and microphone loudness are properties of the firmware, not of the
+// operator, so the tuning is kept per device type. Values saved before this was
+// split are read once as the fallback, so nobody has to dial them in again.
+const PREF_ROOT = 'mediabox.audioCall'
+function readPref (name, type, fallback) {
+  const scoped = LocalStorage.getItem(`${PREF_ROOT}.${name}.${type || 'default'}`)
+  if (scoped !== null) return scoped
+  const legacy = LocalStorage.getItem(`${PREF_ROOT}.${name}`)
+  return legacy === null ? fallback : legacy
+}
 
 export default defineComponent({
   name: 'AudioCall',
@@ -153,6 +169,11 @@ export default defineComponent({
     sessions: {
       type: Array,
       default: () => []
+    },
+    // the tuning below is saved per device type, not per operator
+    deviceType: {
+      type: [Number, String],
+      default: null
     }
   },
   data () {
@@ -169,11 +190,12 @@ export default defineComponent({
       micStream: null,
       micError: null,
       openMic: false,
-      boost: LocalStorage.getItem(BOOST_PREF) || 100,
+      boost: readPref('boost', this.deviceType, 100),
       // how much of the vehicle audio survives while we transmit, 0 = muted
-      duck: LocalStorage.getItem(DUCK_PREF) === null ? 0 : LocalStorage.getItem(DUCK_PREF),
+      duck: readPref('duck', this.deviceType, 0),
       // one window after release: silence still goes out, the vehicle stays down
-      tail: LocalStorage.getItem(TAIL_PREF) === null ? ECHO_TAIL : LocalStorage.getItem(TAIL_PREF),
+      tail: readPref('tail', this.deviceType, ECHO_TAIL),
+      keepOpen: readPref('keepOpen', this.deviceType, true),
       silence: null,
       tailTimer: null,
       boosted: false,
@@ -248,15 +270,20 @@ export default defineComponent({
       this.applyOutput()
     },
     boost (v) {
-      LocalStorage.set(BOOST_PREF, v)
+      this.savePref('boost', v)
       this.applyOutput()
     },
     duck (v) {
-      LocalStorage.set(DUCK_PREF, v)
+      this.savePref('duck', v)
       this.applyOutput()
     },
     tail (v) {
-      LocalStorage.set(TAIL_PREF, v)
+      this.savePref('tail', v)
+    },
+    keepOpen (v) {
+      this.savePref('keepOpen', v)
+      // turning it off mid-call should not leave the line open until the next press
+      if (!v && !this.talking && this.session && !this.tailTimer) this.session.setMic(null)
     },
     openMic (v) {
       // open mic keeps the track on the sender; PTT hands it over only while held
@@ -283,6 +310,9 @@ export default defineComponent({
       this.$nextTick(() => this.connect())
     },
     audioMode,
+    savePref (name, value) {
+      LocalStorage.set(`${PREF_ROOT}.${name}.${this.deviceType || 'default'}`, value)
+    },
     // sessions can share a channel, so the list also says how old each one is
     sessionAge (s) {
       if (!s.established) return ''
@@ -523,20 +553,24 @@ export default defineComponent({
         this.suppress(true)
         return
       }
-      // Released. Cutting the stream dead can leave the device player holding the
-      // last words until packets resume, so for the hold we keep sending silence
-      // and keep the vehicle down - the same window covers both.
-      const hold = this.tail > 0
-      this.session.setMic(hold ? this.silentTrack() : null)
-      if (!hold) {
-        this.suppress(false)
+      // Released. The device player waits for its buffer to fill and stalls when it
+      // does not, holding the last words back until the next press flushes them - so
+      // silence keeps going out instead of cutting the stream dead. With the line kept
+      // open it never stops; otherwise it lasts as long as the suppression window.
+      // This is a client-side stand-in: the gateway is the right place to pad the
+      // device buffer. Once it does, turn keepOpen off (per device type) so the two
+      // do not both feed the stream - or drop this branch and silentTrack() with it.
+      this.session.setMic(this.silentTrack())
+      if (this.tail > 0) {
+        this.tailTimer = setTimeout(() => {
+          if (this.session && !this.keepOpen) this.session.setMic(null)
+          this.suppress(false)
+          this.tailTimer = null
+        }, this.tail)
         return
       }
-      this.tailTimer = setTimeout(() => {
-        if (this.session) this.session.setMic(null)
-        this.suppress(false)
-        this.tailTimer = null
-      }, this.tail)
+      if (!this.keepOpen) this.session.setMic(null)
+      this.suppress(false)
     },
     // open mic never ducks: the operator chose to keep the line open
     suppress (on) {
