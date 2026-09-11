@@ -159,8 +159,23 @@
             <div class="text-subtitle1 text-grey-5">No media for {{ selectedDate }}</div>
             <div class="text-caption q-mt-xs text-grey-7">Pick another date, or request data from the device above</div>
           </div>
-          <q-table v-else :grid="fileviewtype === 'grid'" class="filemanager"
-            :style="`height: ${(height || 400) - mainTimelineSize.height - 50 - 8}px;`" :rows="visibleEvents"
+          <template v-else>
+          <div v-if="selected.length" class="mb-select-bar row items-center no-wrap q-px-md">
+            <q-icon name="mdi-checkbox-multiple-marked-outline" size="18px" color="teal-4" class="q-mr-sm" />
+            <div class="text-white">{{ selected.length }} selected</div>
+            <div class="text-caption text-grey-5 q-ml-sm" v-if="selectedSize">{{ formatB(selectedSize) }}</div>
+            <q-space />
+            <q-btn flat dense no-caps icon="mdi-download" label="Download" color="teal-4" class="q-mr-xs"
+              :loading="batchBusy" @click="downloadSelected" />
+            <q-btn flat dense no-caps icon="mdi-delete-outline" label="Delete" color="red-4" class="q-mr-xs"
+              :disable="batchBusy" @click="deleteSelected" />
+            <q-btn flat dense round icon="mdi-close" color="blue-grey-4" :disable="batchBusy"
+              @click="selected = []">
+              <q-tooltip>Clear selection</q-tooltip>
+            </q-btn>
+          </div>
+          <q-table :grid="fileviewtype === 'grid'" class="filemanager" selection="multiple" v-model:selected="selected"
+            :style="`height: ${(height || 400) - mainTimelineSize.height - 50 - 8 - (selected.length ? 44 : 0)}px;`" :rows="visibleEvents"
             :columns="columns" :visible-columns="visibleColumns" row-key="uuid" virtual-scroll v-model:pagination="pagination"
             :rows-per-page-options="[0]" dense card-container-class="content-start" @row-click="rowClick">
             <template v-slot:body-cell-preview="props">
@@ -211,13 +226,17 @@
               </q-td>
             </template>
             <template v-slot:item="props">
-              <div class="q-pa-xs col-xs-6 col-sm-4 col-md-3 col-lg-2 col-xl-2">
+              <div class="q-pa-xs col-xs-6 col-sm-4 col-md-3 col-lg-2 col-xl-2 mb-grid-cell"
+                :class="{ 'mb-grid-picked': props.selected }">
+                <q-checkbox v-model="props.selected" dense dark size="xs" color="teal-4"
+                  class="mb-grid-check" @click.stop />
                 <MediaItem :media="props.row" :item="item" @embed="embed"
                   :highlighted="current && current.uuid === props.row.uuid"
                   @click="() => openMedia(props.row)" style="margin: 0 auto" />
               </div>
             </template>
           </q-table>
+          </template>
         </template>
       </q-page>
       <q-footer class="mb-footer q-pt-sm">
@@ -411,6 +430,8 @@ export default {
       wallAutoplay: false,
       wallZoom: null,
       zoomRange: null,
+      selected: [],
+      batchBusy: false,
       playing: false,
       height: 400,
       contentWidth: 0,
@@ -553,6 +574,9 @@ export default {
       if (batch.length) a.push({ key: 'batch', cls: 'mb-act-batch', icon: 'mdi-playlist-play', label: 'Batch', title: 'Multi-channel stream / playback', divider: true, children: batch })
       return a
     },
+    selectedSize () {
+      return this.selected.reduce((n, f) => n + (f.size || 0), 0)
+    },
     // the camera wall only makes sense with playable channels
     hasCameraChannels () {
       return (this.currentEvents || []).some(f => {
@@ -596,6 +620,9 @@ export default {
     },
     '$route.params.deviceid': function () {
       this.init()
+    },
+    selectedDate () {
+      this.selected = []
     },
     // A session started here opens its call panel by itself. Connections arrive
     // over MQTT on every client watching the device, so match the command id to
@@ -783,6 +810,79 @@ export default {
       } else {
         window.open(mediaFileUrl(item), '_blank')
       }
+    },
+    // One file at a time on purpose: the browser blocks a burst of downloads, and
+    // fetching through a blob keeps the server-side name and stops the browser from
+    // opening a video in a tab instead of saving it. Only one file is in memory.
+    async downloadSelected () {
+      const files = this.selected.slice()
+      this.batchBusy = true
+      const notify = this.$q.notify({
+        group: false, timeout: 0, spinner: true, message: `Downloading 1 of ${files.length}…`
+      })
+      let done = 0
+      let failed = 0
+      for (const file of files) {
+        try {
+          notify({ message: `Downloading ${done + 1} of ${files.length}…` })
+          const blob = await fetch(mediaFileUrl(file)).then(r => {
+            if (!r.ok) throw new Error(r.status)
+            return r.blob()
+          })
+          const url = URL.createObjectURL(blob)
+          const a = document.createElement('a')
+          a.href = url
+          a.download = file.name || file.uuid
+          document.body.appendChild(a)
+          a.click()
+          a.remove()
+          URL.revokeObjectURL(url)
+          done++
+        } catch (e) {
+          failed++
+        }
+      }
+      this.batchBusy = false
+      notify({
+        spinner: false,
+        timeout: 4000,
+        type: failed ? 'warning' : 'positive',
+        message: failed ? `Downloaded ${done}, failed ${failed}` : `Downloaded ${done} file(s)`
+      })
+    },
+    deleteSelected () {
+      const files = this.selected.slice()
+      this.$q.dialog({
+        title: 'Confirm',
+        message: `Delete ${files.length} file(s)? Protected files are kept.`,
+        ok: 'Delete',
+        cancel: 'No'
+      }).onOk(async () => {
+        this.batchBusy = true
+        const notify = this.$q.notify({
+          group: false, timeout: 0, spinner: true, message: `Deleting 1 of ${files.length}…`
+        })
+        let done = 0
+        const failed = []
+        for (const file of files) {
+          notify({ message: `Deleting ${done + failed.length + 1} of ${files.length}…` })
+          try {
+            await this.$connector.http.delete(`gw/devices/${this.item.id}/media`, { data: { uuid: file.uuid } })
+            this.deleteMedia(file.__event.date, file.uuid)
+            done++
+          } catch (e) {
+            failed.push(file.name || file.uuid)
+          }
+        }
+        this.batchBusy = false
+        this.selected = []
+        notify({
+          spinner: false,
+          timeout: 5000,
+          type: failed.length ? 'warning' : 'positive',
+          message: failed.length ? `Deleted ${done}, kept ${failed.length} (protected or in use)` : `Deleted ${done} file(s)`
+        })
+      })
     },
     deleteFile (uuid, date) {
       const that = this
@@ -981,6 +1081,34 @@ export default {
 // (header/footer offsetParent), which otherwise shows the layout bg as a grey strip
 .q-layout-container > .absolute-full
   right: 0 !important
+
+// --- Batch selection ------------------------------------------------
+.mb-select-bar
+  height: 44px
+  background: #1b2026
+  border-bottom: 1px solid rgba(255, 255, 255, .07)
+
+.mb-grid-cell
+  position: relative
+  // the checkbox only shows on hover, or while the card is picked
+  .mb-grid-check
+    position: absolute
+    top: 10px
+    left: 10px
+    z-index: 2
+    opacity: 0
+    border-radius: 4px
+    background: rgba(0, 0, 0, .45)
+    transition: opacity .15s
+  &:hover .mb-grid-check
+    opacity: 1
+
+.mb-grid-picked
+  .mb-grid-check
+    opacity: 1
+  .media-element
+    outline: 2px solid #26c6da
+    outline-offset: -2px
 
 // --- Right drawer (connections / uploads) ---------------------------
 .mb-drawer
