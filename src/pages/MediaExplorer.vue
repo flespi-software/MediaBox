@@ -43,8 +43,8 @@
         <q-space />
         <q-btn icon="mdi-calendar" :label="$q.screen.gt.xs ? selectedDate : ''" flat color="white">
           <q-menu ref="calendarpopup">
-            <q-date first-day-of-week="1" minimal no-unset event-color="teal-5" color="blue-grey-6" landscape mask="YYYY-MM-DD"
-              :events="events" @update:model-value="setSelectedDate" :model-value="selectedDate"
+            <q-date first-day-of-week="1" minimal no-unset color="blue-grey-6" landscape mask="YYYY-MM-DD"
+              :events="calendarEvents" :event-color="calendarEventColor" @update:model-value="setSelectedDate" :model-value="selectedDate"
               @navigation="monthChange" />
           </q-menu>
         </q-btn>
@@ -134,8 +134,57 @@
       <q-page>
         <q-resize-observer @resize="onContentResize" />
         <template v-if="viewtype === 'filemanager'">
+          <div v-if="selected.length" class="mb-select-bar row items-center no-wrap q-px-md">
+            <q-icon name="mdi-checkbox-multiple-marked-outline" size="18px" color="teal-4" class="q-mr-sm" />
+            <q-btn flat dense no-caps color="white" class="mb-select-count" icon-right="mdi-menu-down">
+              <span>{{ selected.length }} selected</span>
+              <span v-if="selectedDays.length > 1" class="text-grey-5 q-ml-xs">· {{ selectedDays.length }} days</span>
+              <span v-if="selectedSize" class="text-grey-5 q-ml-xs">· {{ formatB(selectedSize) }}</span>
+              <q-menu anchor="bottom left" self="top left" class="mb-select-menu">
+                <q-list dense dark style="min-width: 300px; max-height: 60vh" class="scroll">
+                  <template v-for="day in selectedDays" :key="day.date">
+                    <q-item clickable v-close-popup @click="setSelectedDate(day.date)"
+                      :class="{ 'mb-select-day-current': day.date === selectedDate }">
+                      <q-item-section>
+                        <q-item-label class="text-weight-medium">{{ day.date }}</q-item-label>
+                      </q-item-section>
+                      <q-item-section side>
+                        <q-item-label caption>{{ day.files.length }}</q-item-label>
+                      </q-item-section>
+                    </q-item>
+                    <q-item v-for="f in day.files" :key="f.uuid" class="q-pl-lg">
+                      <q-item-section avatar style="min-width: 28px">
+                        <q-icon :name="fileKindMeta(f).icon" :style="{ color: fileKindMeta(f).color }" size="18px" />
+                      </q-item-section>
+                      <q-item-section>
+                        <q-item-label class="ellipsis" style="max-width: 260px">{{ f.name || f.__event.time }}</q-item-label>
+                        <q-item-label caption>{{ f.__event.time }}</q-item-label>
+                      </q-item-section>
+                      <q-item-section side>
+                        <q-btn flat dense round size="sm" icon="mdi-close" @click="unselect(f)" />
+                      </q-item-section>
+                    </q-item>
+                  </template>
+                </q-list>
+              </q-menu>
+            </q-btn>
+            <q-space />
+            <q-btn v-if="selectedTacho.length" flat dense no-caps icon="mdi-smart-card-reader"
+              :label="selectedTacho.length > 1 ? `TachoBox (${selectedTacho.length})` : 'TachoBox'" color="purple-3"
+              class="q-mr-xs" :disable="batchBusy" @click="tachoFiles = selectedTacho">
+              <q-tooltip>Open the selected tachograph files in TachoBox as one timeline</q-tooltip>
+            </q-btn>
+            <q-btn flat dense no-caps icon="mdi-download" label="Download" color="teal-4" class="q-mr-xs"
+              :loading="batchBusy" @click="downloadSelected" />
+            <q-btn flat dense no-caps icon="mdi-delete-outline" label="Delete" color="red-4" class="q-mr-xs"
+              :disable="batchBusy" @click="deleteSelected" />
+            <q-btn flat dense round icon="mdi-close" color="blue-grey-4" :disable="batchBusy"
+              @click="selected = []">
+              <q-tooltip>Clear selection</q-tooltip>
+            </q-btn>
+          </div>
           <div v-if="mediaLoading" class="filemanager-skeleton scroll"
-            :style="`height: ${(height || 400) - mainTimelineSize.height - 50 - 8}px;`">
+            :style="`height: ${(height || 400) - mainTimelineSize.height - 50 - 8 - (selected.length ? 44 : 0)}px;`">
             <div v-if="fileviewtype === 'grid'" class="row">
               <div v-for="n in 12" :key="n" class="q-pa-xs col-xs-6 col-sm-4 col-md-3 col-lg-2 col-xl-2">
                 <q-skeleton square style="aspect-ratio:16/9; border-radius:6px" />
@@ -154,31 +203,12 @@
             </template>
           </div>
           <div v-else-if="!currentEvents.length" class="column flex-center text-grey-6"
-            :style="`height: ${(height || 400) - mainTimelineSize.height - 50 - 8}px;`">
+            :style="`height: ${(height || 400) - mainTimelineSize.height - 50 - 8 - (selected.length ? 44 : 0)}px;`">
             <q-icon name="mdi-folder-multiple-image" size="64px" class="q-mb-md" style="opacity:.45" />
             <div class="text-subtitle1 text-grey-5">No media for {{ selectedDate }}</div>
             <div class="text-caption q-mt-xs text-grey-7">Pick another date, or request data from the device above</div>
           </div>
           <template v-else>
-          <div v-if="selected.length" class="mb-select-bar row items-center no-wrap q-px-md">
-            <q-icon name="mdi-checkbox-multiple-marked-outline" size="18px" color="teal-4" class="q-mr-sm" />
-            <div class="text-white">{{ selected.length }} selected</div>
-            <div class="text-caption text-grey-5 q-ml-sm" v-if="selectedSize">{{ formatB(selectedSize) }}</div>
-            <q-space />
-            <q-btn v-if="selectedTacho.length" flat dense no-caps icon="mdi-smart-card-reader"
-              :label="selectedTacho.length > 1 ? `TachoBox (${selectedTacho.length})` : 'TachoBox'" color="purple-3"
-              class="q-mr-xs" :disable="batchBusy" @click="tachoFiles = selectedTacho">
-              <q-tooltip>Open the selected tachograph files in TachoBox as one timeline</q-tooltip>
-            </q-btn>
-            <q-btn flat dense no-caps icon="mdi-download" label="Download" color="teal-4" class="q-mr-xs"
-              :loading="batchBusy" @click="downloadSelected" />
-            <q-btn flat dense no-caps icon="mdi-delete-outline" label="Delete" color="red-4" class="q-mr-xs"
-              :disable="batchBusy" @click="deleteSelected" />
-            <q-btn flat dense round icon="mdi-close" color="blue-grey-4" :disable="batchBusy"
-              @click="selected = []">
-              <q-tooltip>Clear selection</q-tooltip>
-            </q-btn>
-          </div>
           <q-table :grid="fileviewtype === 'grid'" class="filemanager" selection="multiple" v-model:selected="selected"
             :style="`height: ${(height || 400) - mainTimelineSize.height - 50 - 8 - (selected.length ? 44 : 0)}px;`" :rows="visibleEvents"
             :columns="columns" :visible-columns="visibleColumns" row-key="uuid" virtual-scroll v-model:pagination="pagination"
@@ -580,6 +610,23 @@ export default {
       if (batch.length) a.push({ key: 'batch', cls: 'mb-act-batch', icon: 'mdi-playlist-play', label: 'Batch', title: 'Multi-channel stream / playback', divider: true, children: batch })
       return a
     },
+    // selection kept across days, grouped by day for the selection menu
+    selectedDays () {
+      const days = {}
+      this.selected.forEach(f => {
+        const d = f.__event.date
+        ;(days[d] || (days[d] = [])).push(f)
+      })
+      return Object.keys(days).sort().map(date => ({
+        date,
+        files: days[date].sort((a, b) => a.created - b.created)
+      }))
+    },
+    calendarEvents () {
+      const set = new Set(this.events)
+      this.selectedDays.forEach(d => set.add(d.date.replaceAll('-', '/')))
+      return [...set]
+    },
     selectedTacho () {
       return this.selected.filter(isTachographFile)
     },
@@ -633,10 +680,8 @@ export default {
       }
     },
     '$route.params.deviceid': function () {
-      this.init()
-    },
-    selectedDate () {
       this.selected = []
+      this.init()
     },
     // A session started here opens its call panel by itself. Connections arrive
     // over MQTT on every client watching the device, so match the command id to
@@ -745,6 +790,12 @@ export default {
       this.showcamerawall = false
       this.current = media
       this.showmedia = true
+    },
+    unselect (file) {
+      this.selected = this.selected.filter(f => f.uuid !== file.uuid)
+    },
+    calendarEventColor (date) {
+      return this.selectedDays.some(d => d.date === date.replaceAll('/', '-')) ? 'amber-5' : 'teal-5'
     },
     closeTacho () {
       this.tachoFiles = []
@@ -914,6 +965,7 @@ export default {
         this.$connector.http.delete(`gw/devices/${this.item.id}/media`, { data: { uuid } }).then((response) => {
           // that.onError(response)
           that.deleteMedia(date, uuid)
+          that.selected = that.selected.filter(f => f.uuid !== uuid)
         }, (response) => {
           // that.onError(response.response)
         })
@@ -1106,6 +1158,11 @@ export default {
   height: 44px
   background: #1b2026
   border-bottom: 1px solid rgba(255, 255, 255, .07)
+
+.mb-select-menu
+  background: #1b2026
+  .mb-select-day-current
+    color: #ffca28
 
 .mb-grid-cell
   position: relative
