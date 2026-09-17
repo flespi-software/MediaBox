@@ -10,15 +10,18 @@ export function isTachographFile (file) {
   return TACHO_EXTENSIONS.some(ext => name.endsWith('.' + ext))
 }
 
-export function tachoboxUrl (deviceId, file, token, options) {
-  const base = `${TACHOBOX_HOST}/#/device/${deviceId}/file/${file.uuid}`
-  const params = []
-  if (token) params.push(`token=${encodeURIComponent(token)}`)
+// files: one file or several of the same device; TachoBox merges them
+export function tachoboxUrl (deviceId, files, token, options) {
+  const uuids = [].concat(files).map(f => f.uuid).join(',')
+  const params = new URLSearchParams()
+  if (token) params.set('token', token)
   if (options) {
     Object.entries(options).forEach(([k, v]) => {
       if (v === undefined || v === null || v === '') return
-      params.push(`${encodeURIComponent(k)}=${encodeURIComponent(v)}`)
+      params.set(k, v)
     })
   }
-  return params.length ? `${base}?${params.join('&')}` : base
+  const query = params.toString()
+  const base = `${TACHOBOX_HOST}/#/device/${deviceId}/file/${uuids}`
+  return query ? `${base}?${query}` : base
 }

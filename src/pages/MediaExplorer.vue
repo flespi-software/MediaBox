@@ -165,6 +165,11 @@
             <div class="text-white">{{ selected.length }} selected</div>
             <div class="text-caption text-grey-5 q-ml-sm" v-if="selectedSize">{{ formatB(selectedSize) }}</div>
             <q-space />
+            <q-btn v-if="selectedTacho.length" flat dense no-caps icon="mdi-smart-card-reader"
+              :label="selectedTacho.length > 1 ? `TachoBox (${selectedTacho.length})` : 'TachoBox'" color="purple-3"
+              class="q-mr-xs" :disable="batchBusy" @click="tachoFiles = selectedTacho">
+              <q-tooltip>Open the selected tachograph files in TachoBox as one timeline</q-tooltip>
+            </q-btn>
             <q-btn flat dense no-caps icon="mdi-download" label="Download" color="teal-4" class="q-mr-xs"
               :loading="batchBusy" @click="downloadSelected" />
             <q-btn flat dense no-caps icon="mdi-delete-outline" label="Delete" color="red-4" class="q-mr-xs"
@@ -248,11 +253,11 @@
     </q-page-container>
 
     <transition name="mb-fade">
-      <div v-if="showmedia && current && isTachographFile(current)" class="absolute-full bg-black"
+      <div v-if="tachoView.length" class="absolute-full bg-black"
         style="z-index: 2000">
-        <q-btn flat round icon="mdi-close" @click="(current = undefined), (showmedia = false)"
+        <q-btn flat round icon="mdi-close" @click="closeTacho"
           class="absolute-top-right" color="white" style="z-index: 2" />
-        <iframe :src="tachoboxUrl(item.id, current, token, { hidepanels: 1, theme: 'dark' })"
+        <iframe :src="tachoboxUrl(item.id, tachoView, token, { hidepanels: 1, theme: 'dark' })"
           style="width: 100%; height: 100%; border: 0; display: block;" class="bg-black" />
       </div>
     </transition>
@@ -431,6 +436,7 @@ export default {
       wallZoom: null,
       zoomRange: null,
       selected: [],
+      tachoFiles: [],
       batchBusy: false,
       playing: false,
       height: 400,
@@ -573,6 +579,14 @@ export default {
       if (this.cmdplaybackbatch) batch.push({ icon: 'mdi-history', label: 'Playback (multi-channel)', fn: () => this.playbackVideoBatch({}) })
       if (batch.length) a.push({ key: 'batch', cls: 'mb-act-batch', icon: 'mdi-playlist-play', label: 'Batch', title: 'Multi-channel stream / playback', divider: true, children: batch })
       return a
+    },
+    selectedTacho () {
+      return this.selected.filter(isTachographFile)
+    },
+    // files shown in TachoBox: a batch from the selection, or the opened file
+    tachoView () {
+      if (this.tachoFiles.length) return this.tachoFiles
+      return this.showmedia && this.current && isTachographFile(this.current) ? [this.current] : []
     },
     selectedSize () {
       return this.selected.reduce((n, f) => n + (f.size || 0), 0)
@@ -731,6 +745,11 @@ export default {
       this.showcamerawall = false
       this.current = media
       this.showmedia = true
+    },
+    closeTacho () {
+      this.tachoFiles = []
+      this.current = undefined
+      this.showmedia = false
     },
     openCameraWallAt (media) {
       const ch = media.meta && media.meta.channel
