@@ -33,6 +33,7 @@
 <script>
 import { defineComponent } from 'vue'
 import L from 'leaflet'
+import { createTileLayer } from '../../../utils/tiles'
 import 'leaflet/dist/leaflet.css'
 
 // cyan = playhead, green = realtime; rotated to the heading
@@ -80,13 +81,10 @@ export default defineComponent({
     position () { this.updateLiveMarker() }
   },
   mounted () {
-    // base layers with a switcher: dark (default) / light Carto + satellite
-    const carto = '&copy; OpenStreetMap &copy; CARTO'
+    // base layers with a switcher: dark (default) / light OSM in grayscale + satellite
     const baseLayers = {
-      Dark: L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png',
-        { maxZoom: 20, subdomains: 'abcd', attribution: carto }),
-      Light: L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png',
-        { maxZoom: 20, subdomains: 'abcd', attribution: carto }),
+      Dark: createTileLayer(true),
+      Light: createTileLayer(false),
       Satellite: L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
         { maxZoom: 19, attribution: 'Tiles &copy; Esri' })
     }
