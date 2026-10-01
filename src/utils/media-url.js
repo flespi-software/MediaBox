@@ -1,4 +1,5 @@
-let mediaBase = 'https://media.flespi.io'
+// the region's media host, applied on boot
+let mediaBase = ''
 
 export function setMediaBase (base) {
   if (base) mediaBase = base

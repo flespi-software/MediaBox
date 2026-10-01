@@ -55,7 +55,7 @@
 
 <script>
 import { isTachographFile } from '../../utils/tachograph-url'
-import { formboxUrl } from '../../utils/formbox-url'
+import { appHost } from '../../utils/region-apps'
 
 export default {
   name: 'UploadMedia',
@@ -76,7 +76,7 @@ export default {
   }),
   computed: {
     formboxUrl () {
-      return formboxUrl()
+      return appHost('formbox')
     },
     dialogHeight () {
       if (this.height > this.screenHeight - 300) {

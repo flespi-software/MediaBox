@@ -413,6 +413,8 @@ import { useAppearanceStore } from '../stores/appearance'
 import { useMediaStore } from '../stores/media'
 
 import moment from 'moment'
+import { toolboxDeviceUrl } from '../utils/toolbox-url'
+import { appHost } from '../utils/region-apps'
 import EmbedPlayer from '../components/MediaExplorer/EmbedPlayer.vue'
 import MediaCommand from '../components/MediaExplorer/command/command.vue'
 import UploadMedia from '../components/MediaExplorer/UploadMedia.vue'
@@ -529,7 +531,6 @@ export default {
   },
   computed: {
     ...mapState(useAuthStore, {
-      region: store => store.region,
       token: store => store.token,
       connected: store => store.connected,
       blocked: store => store.blocked
@@ -755,8 +756,7 @@ export default {
       this.setSelectedMonth(e)
     },
     login () {
-      const base = (this.region && this.region.rest) || 'https://flespi.io'
-      window.open(`${base}/login/#/providers`, 'auth', 'width=500,height=600')
+      window.open(`${appHost('login')}/#/providers`, 'auth', 'width=500,height=600')
     },
     async init () {
       this.item = null
@@ -1131,9 +1131,7 @@ export default {
     },
 
     openToolbox (timestamp) {
-      const start = moment.unix(timestamp).startOf('day').unix(),
-        end = moment.unix(timestamp).endOf('day').unix()
-      const url = `${this.region.rest || ''}/toolbox/#/devices/${this.item.id}?token=${this.token}&fullscreen=1&noselect=all&logs=%7B%22from%22%3A${start},%22to%22%3A${end}.999999,%22scroll%22%3A${timestamp}%7D&messages=%7B%22from%22%3A${start},%22to%22%3A${end}.999999,%22scroll%22%3A${timestamp},"selected"%3A%5B${timestamp}%5D%7D`
+      const url = toolboxDeviceUrl(this.item.id, this.token, timestamp)
       // this.$root.$emit('openTools', { url, title: 'Toolbox device', subtitle: `d#${this.item.id}` })
       window.open(url, '_blank')
     }

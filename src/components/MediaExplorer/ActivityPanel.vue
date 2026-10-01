@@ -113,6 +113,7 @@
 import { defineComponent } from 'vue'
 import { mapState, mapActions } from 'pinia'
 import moment from 'moment'
+import { toolboxDeviceUrl } from '../../utils/toolbox-url'
 // import { mapState } from 'vuex'
 // import MediaPlayer from './player/player.vue'
 import { useAuthStore } from '../../stores/auth'
@@ -138,7 +139,6 @@ export default defineComponent({
   },
   computed: {
     ...mapState(useAuthStore, {
-      region: state => state.region,
       token: state => state.token
     }),
     ...mapState(useMediaStore, {
@@ -275,9 +275,7 @@ export default defineComponent({
       this.cons(response)
     },
     openToolbox (timestamp) {
-      const start = moment.unix(timestamp).startOf('day').unix(),
-        end = moment.unix(timestamp).endOf('day').unix()
-      const url = `${this.region.rest || ''}/toolbox/#/devices/${this.item.id}?token=${this.token}&fullscreen=1&noselect=all&logs=%7B%22from%22%3A${start},%22to%22%3A${end}.999999,%22scroll%22%3A${timestamp}%7D&messages=%7B%22from%22%3A${start},%22to%22%3A${end}.999999,%22scroll%22%3A${timestamp},"selected"%3A%5B${timestamp}%5D%7D`
+      const url = toolboxDeviceUrl(this.item.id, this.token, timestamp)
       this.$root.$emit('openTools', { url, title: 'Toolbox device', subtitle: `d#${this.item.id}` })
     },
     async cancelCommand (commandId) {

@@ -3,6 +3,7 @@ import packagejson from '../../package.json'
 import { boot } from 'quasar/wrappers'
 import axios from 'axios'
 import { setMediaBase } from '../utils/media-url'
+import { setRegionApps } from '../utils/region-apps'
 
 async function getRegion () {
   const host = window.location.hostname.indexOf('flespi.io') > -1 ? window.location.hostname : (window.location.hostname + ':9005')
@@ -54,6 +55,7 @@ export default boot(async ({ app, store }) => {
   // properties: { sessionExpiryInterval: 300 },
 
   setMediaBase(currentRegion.media)
+  setRegionApps(currentRegion.apps)
   app.config.globalProperties.$defaultRegion = currentRegion
   app.use(ConnectionPlugin, connectionConfig)
   store.use(() => ({ $connector: app.config.globalProperties.$connector, $region: currentRegion }))

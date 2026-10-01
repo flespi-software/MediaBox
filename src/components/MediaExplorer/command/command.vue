@@ -41,7 +41,7 @@
 
 <script>
 import moment from 'moment'
-import { formboxUrl } from '../../../utils/formbox-url'
+import { appHost } from '../../../utils/region-apps'
 export default {
   name: 'MediaCommand',
   props: {
@@ -73,7 +73,7 @@ export default {
   }),
   computed: {
     formboxUrl () {
-      return formboxUrl()
+      return appHost('formbox')
     },
     dialogHeight: function () {
       if (this.height > this.screenHeight - 200) {

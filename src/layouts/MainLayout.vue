@@ -18,7 +18,7 @@
       <q-btn v-if="token && connected && deviceList.length === 0" tabindex="0" icon="mdi-developer-board"
         color="teal-4" outline no-caps rounded @click="getDevices()" label="Request devices" class="q-ml-sm" />
       <q-btn v-if="!token" tabindex="0" ref="loginbutton" icon="mdi-account-circle" color="teal-4" no-caps rounded
-        outline @click="openWindow(`${region.rest || `https://${host}`}/login/#/providers`)" label="Log in" class="q-ml-sm" />
+        outline @click="openWindow(loginUrl)" label="Log in" class="q-ml-sm" />
       <q-btn v-else tabindex="0" icon="mdi-logout" color="blue-grey-4" round flat dense @click="setToken('')" class="q-ml-sm">
         <q-tooltip>Log out</q-tooltip>
       </q-btn>
@@ -92,12 +92,12 @@ import { defineComponent } from 'vue'
 import { mapState, mapActions } from 'pinia'
 import { useAuthStore } from '../stores/auth'
 import { useMediaStore } from '../stores/media'
+import { appHost } from '../utils/region-apps'
 
 export default defineComponent({
   name: 'MainLayout',
   data () {
     return {
-      host: 'flespi.io',
       deviceId: null,
       deviceDrawer: this.$q ? this.$q.screen.gt.sm : false,
       deviceSearch: '',
@@ -105,8 +105,10 @@ export default defineComponent({
     }
   },
   computed: {
+    loginUrl () {
+      return `${appHost('login')}/#/providers`
+    },
     ...mapState(useAuthStore, {
-      region: store => store.region,
       token: store => store.token,
       connected: store => store.connected
     }),

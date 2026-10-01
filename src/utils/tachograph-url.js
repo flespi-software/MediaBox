@@ -1,4 +1,4 @@
-const TACHOBOX_HOST = 'https://tachobox.flespi.io'
+import { appHost } from './region-apps'
 
 // Tachograph file extensions: .ddd (generic), .v1b/.v2b (vehicle unit gen1/2),
 // .c1b/.c2b (driver card gen1/2), .tgd, .esm
@@ -22,6 +22,6 @@ export function tachoboxUrl (deviceId, files, token, options) {
     })
   }
   const query = params.toString()
-  const base = `${TACHOBOX_HOST}/#/device/${deviceId}/file/${uuids}`
+  const base = `${appHost('tachobox')}/#/device/${deviceId}/file/${uuids}`
   return query ? `${base}?${query}` : base
 }

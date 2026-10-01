@@ -21,7 +21,6 @@
     </div>
     <q-icon v-if="media.mime && media.mime.indexOf('video') == 0" color="white" name="mdi-video" size="50px" class="absolute-center type-icon"/>
     <q-icon v-if="media.mime && media.mime.indexOf('image') == 0" color="white" name="mdi-image" size="50px" class="absolute-center type-icon"/>
-    <!-- <video :src="`${(region && region.media) || 'https://media.flespi.io'}/${m.uuid}`" class="" style="max-width:100%; max-height:100%;margin:auto;"></video> -->
   </div>
 </template>
 
@@ -29,6 +28,7 @@
 // import Vue from 'vue'
 import { defineComponent, computed } from 'vue'
 import moment from 'moment'
+import { toolboxDeviceUrl } from '../../utils/toolbox-url'
 // import { mapState } from 'vuex'
 
 import { useAuthStore } from '../../stores/auth'
@@ -51,10 +51,8 @@ export default defineComponent({
   setup () {
     const auth = useAuthStore()
     const token = computed(() => auth.token)
-    const region = computed(() => auth.region)
     return {
       token,
-      region,
       mediaFileUrl
     }
   },
@@ -106,9 +104,7 @@ export default defineComponent({
       this.cons(response)
     },
     openToolbox (timestamp) {
-      const start = moment.unix(timestamp).startOf('day').unix(),
-        end = moment.unix(timestamp).endOf('day').unix()
-      const url = `${this.region.rest || ''}/toolbox/#/devices/${this.item.id}?token=${this.token}&fullscreen=1&noselect=all&logs=%7B%22from%22%3A${start},%22to%22%3A${end}.999999,%22scroll%22%3A${timestamp}%7D&messages=%7B%22from%22%3A${start},%22to%22%3A${end}.999999,%22scroll%22%3A${timestamp},"selected"%3A%5B${timestamp}%5D%7D`
+      const url = toolboxDeviceUrl(this.item.id, this.token, timestamp)
       // this.$root.$emit('openTools', { url, title: 'Toolbox device', subtitle: `d#${this.item.id}` })
       window.open(url, '_blank')
     }
