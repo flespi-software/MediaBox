@@ -41,7 +41,8 @@ export default defineComponent({
   opacity: 0
   transition: opacity .15s ease
   pointer-events: none
-  .q-btn
+  // the strip itself stays click-through; its controls do not
+  .q-btn, .q-chip
     pointer-events: auto
 
 // pointer devices reveal controls on hover; touch devices have no hover so the

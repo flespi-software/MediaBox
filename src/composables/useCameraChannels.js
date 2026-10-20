@@ -28,7 +28,7 @@ function priority (a, b) {
     String(fb.uuid).localeCompare(String(fa.uuid))
 }
 
-function channelKey (file) {
+export function channelKey (file) {
   const ch = file.meta && file.meta.channel
   return ch === undefined || ch === null ? (file.channel_id ?? 0) : ch
 }
@@ -86,6 +86,19 @@ function resolveLane (raw) {
     }
   }
   return segs
+}
+
+// A single file as a segment on its own, outside the resolved lane: used to pin
+// a file the user picked explicitly, so it wins over whatever the lane resolved
+// for that instant (a photo taken mid-clip is otherwise unreachable - the video
+// owns every instant it covers). Time-bounded, so the pin expires by itself as
+// the playhead moves past the file.
+export function fileSegment (file) {
+  const kind = fileKind(file)
+  const start = file.created
+  const dur = (file.meta && file.meta.duration) || 0
+  const end = kind === 'video' && dur > 0 ? start + dur : start + IMAGE_MIN_HOLD
+  return { file, kind, uuid: file.uuid, start, end }
 }
 
 export function buildCameraModel (events, { dayStart, dayEnd }) {

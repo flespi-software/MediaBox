@@ -9,6 +9,13 @@
     </div>
 
     <WallOverlay :label="label" :focused="focused" @toggle-focus="$emit('toggle-focus')">
+      <template #lead>
+        <q-chip v-if="pinOverrides" dense square size="sm" color="teal-7" text-color="white" icon="mdi-pin"
+          removable class="q-mr-xs" @remove="$emit('clear-pin')">
+          picked
+          <q-tooltip>The file you opened, shown over what this channel would play. Remove to follow the channel.</q-tooltip>
+        </q-chip>
+      </template>
       <template #actions>
         <q-btn v-if="videoOptions" flat round dense size="sm" :color="audioOn ? 'teal-4' : 'white'"
           :icon="audioOn ? 'mdi-volume-high' : 'mdi-volume-off'" @click.stop="$emit('toggle-audio')">
@@ -43,9 +50,12 @@ export default defineComponent({
     // this cell is the active channel (sound + highlight border in the grid)
     active: { type: Boolean, default: false },
     // this cell is the one playing sound (all others muted)
-    audioOn: { type: Boolean, default: false }
+    audioOn: { type: Boolean, default: false },
+    // a file the user opened explicitly: it owns this cell while the playhead is
+    // within its extent, whatever the lane resolved for that instant
+    pin: { type: Object, default: null }
   },
-  emits: ['toggle-focus', 'toggle-audio'],
+  emits: ['toggle-focus', 'toggle-audio', 'clear-pin'],
   data () {
     return {
       videoOptions: null,
@@ -58,6 +68,18 @@ export default defineComponent({
   computed: {
     label () {
       return `CH ${this.channel}`
+    },
+    // the pin is in effect only while the playhead sits inside the pinned file
+    pinned () {
+      const p = this.pin
+      return !!p && this.t >= p.start && this.t < p.end
+    },
+    // worth telling the user about only when the pin actually hides something
+    // else: opening a video the channel would play anyway needs no badge
+    pinOverrides () {
+      if (!this.pinned) return false
+      const seg = this.activeAt(this.t)
+      return !seg || seg.uuid !== this.pin.uuid
     }
   },
   watch: {
@@ -72,6 +94,10 @@ export default defineComponent({
     },
     segments () {
       // lane changed (new data / date) - force a clean resolve
+      this.currentUuid = null
+      this.syncNow()
+    },
+    pin () {
       this.currentUuid = null
       this.syncNow()
     }
@@ -101,7 +127,7 @@ export default defineComponent({
       return null
     },
     syncNow () {
-      const seg = this.activeAt(this.t)
+      const seg = this.pinned ? this.pin : this.activeAt(this.t)
       if (!seg) {
         // gap / nothing to play: show a black screen (not the last frame of the
         // finished clip) and drop the media so its decoder is released

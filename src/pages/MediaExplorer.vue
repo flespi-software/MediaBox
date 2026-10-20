@@ -376,7 +376,8 @@
 
     <transition name="mb-fade">
       <CameraWall v-if="showcamerawall" :device="item" :events="currentEvents" :date="selectedDate"
-        :initial-focus="wallFocus" :initial-time="wallTime" :autoplay="wallAutoplay" :initial-zoom="wallZoom"
+        :initial-focus="wallFocus" :initial-time="wallTime" :initial-file="wallFile"
+        :autoplay="wallAutoplay" :initial-zoom="wallZoom"
         class="absolute-full" style="z-index: 2100" @close="showcamerawall = false" />
     </transition>
   </q-layout>
@@ -429,6 +430,7 @@ import AudioCall from '../components/MediaExplorer/AudioCall.vue'
 import { mediaFileUrl, streamSrcUrl, streamMimeType, isAudioStream } from '../utils/media-url'
 import { audioModeOfStream } from '../utils/audio-mode'
 import { isTachographFile, tachoboxUrl } from '../utils/tachograph-url'
+import { channelKey } from '../composables/useCameraChannels'
 import { fileKind, fileKindMeta, hasThumbnail, viewerStrategy } from '../utils/file-type'
 
 export default {
@@ -464,6 +466,7 @@ export default {
       showcamerawall: false,
       wallFocus: null,
       wallTime: null,
+      wallFile: null,
       wallAutoplay: false,
       wallZoom: null,
       zoomRange: null,
@@ -803,10 +806,12 @@ export default {
       this.showmedia = false
     },
     openCameraWallAt (media) {
-      const ch = media.meta && media.meta.channel
       const dur = (media.meta && media.meta.duration) || 0
-      this.wallFocus = (ch === undefined || ch === null) ? (media.channel_id != null ? media.channel_id : 0) : ch
+      this.wallFocus = channelKey(media)
       this.wallTime = media.created
+      // the wall pins it, so the file the user picked wins over whatever else
+      // covers that instant on the channel (e.g. a photo taken mid-clip)
+      this.wallFile = media
       this.wallAutoplay = fileKind(media) === 'video'
       // frame the timeline to just this clip (video has a duration; images don't)
       this.wallZoom = dur > 0 ? { from: media.created, to: media.created + dur } : null
@@ -817,6 +822,7 @@ export default {
     openCameraWall () {
       this.wallFocus = null
       this.wallTime = null
+      this.wallFile = null
       this.wallAutoplay = false
       // open at the same zoom the explorer timeline currently has (if zoomed)
       this.wallZoom = this.zoomRange ? { ...this.zoomRange } : null

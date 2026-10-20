@@ -33,7 +33,8 @@
         <template #default="{ item, focused, toggleFocus }">
           <CameraCell :channel="item" :segments="lanes[item]" :t="t" :playing="playing" :rate="rate"
             :focused="focused" :active="String(activeChannel) === String(item)" :audio-on="audioChannel === item"
-            @toggle-focus="toggleFocus" @toggle-audio="toggleAudio(item)" />
+            :pin="pinFor(item)"
+            @toggle-focus="toggleFocus" @toggle-audio="toggleAudio(item)" @clear-pin="pinnedFile = null" />
         </template>
       </WallGrid>
       <TrackMap v-if="showTrack" class="cw-track" :t="t" :track="track" :loading="trackLoading"
@@ -62,7 +63,7 @@ import throttle from 'lodash/throttle'
 const TRACK_PREF = 'mediabox.cameraWall.showTrack'
 import { fileKind } from '../../../utils/file-type'
 import { useMasterClock } from '../../../composables/useMasterClock'
-import { buildCameraModel } from '../../../composables/useCameraChannels'
+import { buildCameraModel, channelKey, fileSegment } from '../../../composables/useCameraChannels'
 import { useLivePosition } from '../../../composables/useLivePosition'
 import WallShell from '../wall/WallShell.vue'
 import WallGrid from '../wall/WallGrid.vue'
@@ -83,6 +84,9 @@ export default defineComponent({
     // when opened from a specific file: expand that channel, start at its time
     initialFocus: { type: [String, Number], default: null },
     initialTime: { type: Number, default: null },
+    // the file the wall was opened from: pinned on its channel so the user sees
+    // the file they picked, not whatever else covers that instant
+    initialFile: { type: Object, default: null },
     autoplay: { type: Boolean, default: false },
     // frame the timeline + loop playback to this range ({from,to} unix seconds)
     initialZoom: { type: Object, default: null }
@@ -124,6 +128,7 @@ export default defineComponent({
     // when opened from a specific file, start with that channel expanded + audible
     const focus = this.initialFocus != null ? String(this.initialFocus) : null
     return {
+      pinnedFile: this.initialFile,
       skipGaps: true,
       showPreviews: false,
       focusedChannel: focus,
@@ -142,6 +147,14 @@ export default defineComponent({
     }
   },
   computed: {
+    // kept as one cached object: a fresh segment per render would look like a
+    // new pin to the cell and restart its player
+    pinnedSeg () {
+      return this.pinnedFile ? fileSegment(this.pinnedFile) : null
+    },
+    pinnedChannel () {
+      return this.pinnedFile ? String(channelKey(this.pinnedFile)) : null
+    },
     channels () { return this.model.channels },
     lanes () { return this.model.lanes },
     // channels shown in the grid: the ctrl-clicked subset, or all of them. Kept in
@@ -218,6 +231,10 @@ export default defineComponent({
     this.dispose()
   },
   methods: {
+    // the pinned file as a segment for its own channel; other cells get none
+    pinFor (ch) {
+      return this.pinnedChannel === String(ch) ? this.pinnedSeg : null
+    },
     // solo audio: unmute this channel (mute the rest); press again to mute it too
     toggleAudio (ch) {
       this.audioChannel = this.audioChannel === ch ? null : ch
@@ -281,9 +298,12 @@ export default defineComponent({
     onScrubEnd () {
       if (this.wasPlayingBeforeScrub) this.play()
     },
-    // clicking a preview thumbnail jumps the playhead to that file's start
+    // clicking a preview thumbnail jumps the playhead to that file's start and
+    // pins it, same as opening a file from the explorer list
     onPreviewClick (file) {
-      if (file && file.created != null) this.onSeek(file.created)
+      if (!file || file.created == null) return
+      this.pinnedFile = file
+      this.onSeek(file.created)
     },
     // clicking a channel's lane on the timeline makes it the active channel
     // (sound + highlight); if a channel is currently expanded, switch the
