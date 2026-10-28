@@ -370,8 +370,9 @@
     </transition>
 
     <transition name="mb-fade">
-      <StreamWall v-if="showwall" :streams="wallStreams" :device="item" class="absolute-full" style="z-index: 2100"
-        @close="closeWall" @stop="stopStream" @embed="embed" />
+      <StreamWall v-if="showwall" :streams="wallStreams" :device="item" :initial-focus="wallStreamFocus"
+        class="absolute-full" style="z-index: 2100"
+        @close="closeWall" @stop="stopStream" @remove="removeWallStream" @embed="embed" />
     </transition>
 
     <transition name="mb-fade">
@@ -427,7 +428,7 @@ import StreamWall from '../components/MediaExplorer/StreamWall.vue'
 import CameraWall from '../components/MediaExplorer/camera-wall/CameraWall.vue'
 import ArchiveViewer from '../components/MediaExplorer/ArchiveViewer.vue'
 import AudioCall from '../components/MediaExplorer/AudioCall.vue'
-import { mediaFileUrl, streamSrcUrl, streamMimeType, isAudioStream } from '../utils/media-url'
+import { mediaFileUrl, streamSrcUrl, streamMimeType, isAudioStream, isWebrtcStream } from '../utils/media-url'
 import { audioModeOfStream } from '../utils/audio-mode'
 import { isTachographFile, tachoboxUrl } from '../utils/tachograph-url'
 import { channelKey } from '../composables/useCameraChannels'
@@ -462,7 +463,10 @@ export default {
       current: null,
       showmedia: false,
       showwall: false,
-      wallConnectionId: null,
+      // wall: uuids to show (null = all live), tiles shown so far (ended ones stay), focused uuid
+      wallUuids: null,
+      wallStreams: [],
+      wallStreamFocus: null,
       showcamerawall: false,
       wallFocus: null,
       wallTime: null,
@@ -568,6 +572,7 @@ export default {
             id: `${id}:${ms.channel != null ? ms.channel : ms.uuid}`,
             connectionId: id,
             established: c.established,
+            playback: this.isPlaybackStream(ms),
             meta: { mediastream: ms }
           })
         })
@@ -590,11 +595,10 @@ export default {
         return { uuid: ms.uuid, connectionId: s.connectionId, established: s.established, mode, channel, entry: s }
       })
     },
-    // streams shown in the wall: all, or just one connection's (opened from its Play)
-    wallStreams () {
-      return this.wallConnectionId
-        ? this.activeStreams.filter(s => s.connectionId === this.wallConnectionId)
-        : this.activeStreams
+    // live streams the wall follows: all, or the requested ones
+    wallLive () {
+      const uuids = this.wallUuids
+      return uuids ? this.activeStreams.filter(s => uuids.includes(s.meta.mediastream.uuid)) : this.activeStreams
     },
     // device command buttons, built from capability flags — rendered inline on
     // wide screens and in a second toolbar row on narrow screens
@@ -691,6 +695,9 @@ export default {
     // over MQTT on every client watching the device, so match the command id to
     // avoid popping the dialog up for operators who did not ask for it - they
     // still see the session in the toolbar badge and the activity panel.
+    wallLive () {
+      this.syncWall()
+    },
     audioStreams (list, old) {
       if (list.length <= ((old && old.length) || 0)) return
       const fresh = list[list.length - 1]
@@ -1063,14 +1070,42 @@ export default {
         this.$refs.mediacommand.open(this.item.id, this.cmdtimeline, { from, to, ...data }, this.setCommandID)
       }
     },
-    // open the wall for all streams (connectionId=null) or just one connection's
-    openStreams (connectionId) {
-      this.wallConnectionId = connectionId || null
+    // open the wall: all live streams (null) or { uuids, focus, entries } (entries = ended ones)
+    openStreams (opts) {
+      const o = opts || {}
+      this.wallUuids = o.uuids || null
+      this.wallStreams = o.entries || []
+      this.wallStreamFocus = o.focus || null
       this.showwall = true
+      this.syncWall()
     },
     closeWall () {
       this.showwall = false
-      this.wallConnectionId = null
+      this.wallUuids = null
+      this.wallStreams = []
+    },
+    // merge live streams into the wall; a closed connection keeps its tile so the
+    // player can finish what the server already has (playback ends right after upload)
+    syncWall () {
+      if (!this.showwall) return
+      const uuid = s => s.meta.mediastream.uuid
+      const live = this.wallLive
+      const out = this.wallStreams.map((t) => {
+        const l = live.find(s => uuid(s) === uuid(t))
+        if (l) return l
+        // webrtc has nothing to replay
+        if (isWebrtcStream(t.meta.mediastream)) return null
+        return t.ended ? t : { ...t, ended: true }
+      }).filter(Boolean)
+      live.forEach((s) => { if (!out.some(t => uuid(t) === uuid(s))) out.push(s) })
+      this.wallStreams = out
+    },
+    removeWallStream (uuid) {
+      this.wallStreams = this.wallStreams.filter(t => t.meta.mediastream.uuid !== uuid)
+    },
+    isPlaybackStream (ms) {
+      const cmd = ms && ms.command_id && this.commands && this.commands[ms.command_id]
+      return !!(cmd && cmd.name && cmd.name.startsWith('playback'))
     },
     startStream (data) {
       if (this.cmdstream) {

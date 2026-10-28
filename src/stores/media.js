@@ -2,6 +2,9 @@ import { defineStore } from 'pinia'
 import moment from 'moment'
 import { isAudioStream } from '../utils/media-url'
 
+// how long the server keeps a stream's recording after it ended
+export const STREAM_KEEP_SEC = 600
+
 export const useMediaStore = defineStore('media', {
   state: () => ({
     deviceList: [],
@@ -16,6 +19,8 @@ export const useMediaStore = defineStore('media', {
       uploads: 'flespi/log/gw/devices/{device_id}/media_file_uploaded,media_file_updated'
     },
     connections: {},
+    // streams whose connection closed: uuid -> { ms, endedAt }; the server keeps them ~10 min
+    endedStreams: {},
     commands: {},
     connected: false,
 
@@ -419,6 +424,7 @@ export const useMediaStore = defineStore('media', {
       if (oldid) {
         this.$connector.socket.unsubscribe(this.topics.connections.replace('{device_id}', oldid))
         this.connections = {}
+        this.endedStreams = {}
       }
       if (newid) {
         this.$connector.socket.subscribe({
@@ -440,8 +446,23 @@ export const useMediaStore = defineStore('media', {
       if (data.length > 0) {
         this.connections[id] = JSON.parse(data)
       } else {
+        this.rememberEnded(this.connections[id])
         delete this.connections[id]
       }
+    },
+    rememberEnded (c) {
+      const meta = c && c.meta
+      if (!meta) return
+      const list = Array.isArray(meta.mediastreams) && meta.mediastreams.length
+        ? meta.mediastreams
+        : (meta.mediastream ? [meta.mediastream] : [])
+      const now = Date.now() / 1000
+      const kept = {}
+      Object.entries(this.endedStreams).forEach(([uuid, e]) => {
+        if (now - e.endedAt < STREAM_KEEP_SEC) kept[uuid] = e
+      })
+      list.forEach((ms) => { if (ms.uuid) kept[ms.uuid] = { ms, endedAt: now } })
+      this.endedStreams = kept
     }
   }
 })

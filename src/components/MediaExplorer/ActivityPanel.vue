@@ -35,7 +35,7 @@
     <div v-if="isStream(c) && !isAudio(c)" class="q-px-md q-pb-sm">
       <div class="mb-conn-streams" :class="{ 'mb-conn-streams-multi': streamsOf(c).length > 1 }">
         <div v-for="ms in streamsOf(c)" :key="ms.uuid" class="mb-conn-stream">
-          <img :src="streamSrcUrl(ms, 'preview=jpeg')" class="mb-conn-preview" @click="playStream(ms)" />
+          <img :src="streamSrcUrl(ms, 'preview=jpeg')" class="mb-conn-preview" @click="playStream(c, ms)" />
           <div class="mb-conn-streambar row items-center no-wrap">
             <span class="text-caption text-blue-grey-4" v-if="ms.channel != null">CH {{ ms.channel }}</span>
             <q-space />
@@ -78,6 +78,10 @@
           <q-btn size="sm" color="white" flat dense round icon="mdi-play" title="Play live stream"
             @click.stop="playCommand(cmd)" />
         </q-item-section>
+        <q-item-section side v-else-if="tick > 0 && replayable(cmd)" class="mb-cmd-side">
+          <q-btn size="sm" color="white" flat dense round icon="mdi-play" title="Play ended stream"
+            @click.stop="replayCommand(cmd)" />
+        </q-item-section>
         <q-item-section side v-if="cmd.action === 'queued' || cmd.action === 'sent'" style="padding-left:5px;min-width:30px;">
           <q-btn size="sm" color="red" flat dense round icon="mdi-close-circle"
             @click.stop="cancelCommand(cmd.id)" title="Cancel request" />
@@ -117,8 +121,8 @@ import { toolboxDeviceUrl } from '../../utils/toolbox-url'
 // import { mapState } from 'vuex'
 // import MediaPlayer from './player/player.vue'
 import { useAuthStore } from '../../stores/auth'
-import { useMediaStore } from '../../stores/media'
-import { streamSrcUrl, isAudioStream } from '../../utils/media-url'
+import { useMediaStore, STREAM_KEEP_SEC } from '../../stores/media'
+import { streamSrcUrl, isAudioStream, isWebrtcStream } from '../../utils/media-url'
 import { audioMode, audioModeOfStream } from '../../utils/audio-mode'
 import TimelineResultViewer from './timeline/TimelineResultViewer.vue'
 
@@ -148,6 +152,7 @@ export default defineComponent({
         })
       },
       commands: store => store.commands,
+      endedStreams: store => store.endedStreams,
       recentCommands: store => store.recentCommands,
       media: store => store.media
     })
@@ -177,14 +182,13 @@ export default defineComponent({
       const list = this.streamsOf(c)
       return list.length > 0 && list.every(isAudioStream)
     },
-    // one preview -> that stream fullscreen
-    playStream (ms) {
-      this.$emit('openMedia', { mediastream: ms })
+    // preview and play open the same wall: this connection's streams, preview focused
+    playStream (c, ms) {
+      this.$emit('openStreams', { uuids: this.streamsOf(c).map(s => s.uuid), focus: ms && ms.uuid })
     },
-    // header play / row -> the wall showing just this connection's streams
     onConnClick (c) {
       if (this.isAudio(c)) this.$emit('openAudio', this.streamsOf(c)[0])
-      else this.$emit('openStreams', c.id)
+      else this.playStream(c)
     },
     // live connection matching a stream command's response (single or batch array),
     // or null once the stream ended and its connection is gone
@@ -199,7 +203,36 @@ export default defineComponent({
       const conn = this.streamConnection(cmd)
       if (!conn) return
       if (this.isAudio(conn)) this.$emit('openAudio', this.streamsOf(conn)[0])
-      else this.$emit('openStreams', conn.id)
+      else this.playStream(conn)
+    },
+    // mediastreams of a finished video stream command, still kept on the server
+    endedStreamsOf (cmd) {
+      if (!['start_videostream', 'playback_video', 'start_videostream_batch', 'playback_video_batch'].includes(cmd.name)) return []
+      if (cmd.action !== 'processed' || cmd.executed === false || !cmd.response) return []
+      const now = Date.now() / 1000
+      const type = this.getResponseStreamType(cmd.response) || 'hls'
+      return (Array.isArray(cmd.response) ? cmd.response : [cmd.response])
+        .filter(r => r && r.uuid)
+        .map((r) => {
+          const ended = this.endedStreams[r.uuid]
+          // ended before this page saw it -> count from the command time
+          if (now - (ended ? ended.endedAt : cmd.timestamp) > STREAM_KEEP_SEC) return null
+          if (ended) return ended.ms
+          const url = r.url || (typeof r[type] === 'string' ? r[type] : undefined)
+          return { ...r, mediastream: type, url, command_id: cmd.id }
+        })
+        .filter(ms => ms && !isWebrtcStream(ms))
+    },
+    replayable (cmd) {
+      return this.endedStreamsOf(cmd).length > 0
+    },
+    replayCommand (cmd) {
+      const list = this.endedStreamsOf(cmd)
+      if (!list.length) return
+      this.$emit('openStreams', {
+        uuids: list.map(ms => ms.uuid),
+        entries: list.map(ms => ({ id: ms.uuid, meta: { mediastream: ms }, ended: true, playback: cmd.name.startsWith('playback') }))
+      })
     },
     canOpenAsFile (cmd) {
       return (cmd.name === 'request_video' || cmd.name === 'request_tachograph_file') &&

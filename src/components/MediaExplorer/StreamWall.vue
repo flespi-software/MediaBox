@@ -10,7 +10,7 @@
       </template>
       <template v-else>
         <q-icon name="mdi-monitor-multiple" color="green-4" size="22px" class="q-mr-sm" />
-        <div class="text-white text-subtitle1">Live streams</div>
+        <div class="text-white text-subtitle1">Streams</div>
         <q-badge v-if="streams.length" color="green-7" class="q-ml-sm">{{ streams.length }}</q-badge>
       </template>
     </template>
@@ -22,7 +22,7 @@
     </template>
 
     <div class="sw-body row no-wrap col">
-      <WallGrid class="col" :items="streams" :get-key="(s) => s.id" :click-to-expand="false"
+      <WallGrid class="col" :items="streams" :get-key="streamKey" :click-to-expand="false"
         v-model:focus="focusedId">
         <template #empty>
           <div class="column flex-center text-grey-6" style="height:100%">
@@ -33,7 +33,8 @@
         </template>
         <template #default="{ item, focused, toggleFocus }">
           <StreamCell :stream="item" :focused="focused" @toggle-focus="toggleFocus"
-            @embed="(uuid) => $emit('embed', uuid)" @stop="(id) => $emit('stop', id)" />
+            @embed="(uuid) => $emit('embed', uuid)" @stop="(id) => $emit('stop', id)"
+            @remove="(uuid) => $emit('remove', uuid)" />
         </template>
       </WallGrid>
 
@@ -66,9 +67,14 @@ export default defineComponent({
     device: {
       type: Object,
       default: () => ({})
+    },
+    // stream uuid to open expanded
+    initialFocus: {
+      type: String,
+      default: null
     }
   },
-  emits: ['close', 'stop', 'embed'],
+  emits: ['close', 'stop', 'remove', 'embed'],
   setup (props) {
     // realtime device position over MQTT (for the live map)
     const livePosition = useLivePosition(props.device && props.device.id)
@@ -77,16 +83,19 @@ export default defineComponent({
   data () {
     const pref = LocalStorage.getItem(MAP_PREF)
     return {
-      focusedId: null,
+      focusedId: this.initialFocus,
       showMap: pref === null ? true : pref
     }
   },
   computed: {
     focusedStream () {
-      return this.streams.find((s) => s.id === this.focusedId) || null
+      return this.streams.find((s) => this.streamKey(s) === this.focusedId) || null
     }
   },
   methods: {
+    streamKey (s) {
+      return s.meta.mediastream.uuid
+    },
     toggleMap () {
       this.showMap = !this.showMap
       LocalStorage.set(MAP_PREF, this.showMap)
