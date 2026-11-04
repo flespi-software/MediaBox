@@ -85,6 +85,10 @@
           </template>
         </div>
       </div>
+      <div v-if="blockNotice" class="mb-block-notice row items-center no-wrap q-px-md">
+        <q-icon name="mdi-alert-octagon-outline" size="18px" class="q-mr-sm" />
+        <span class="ellipsis">{{ blockNotice }}</span>
+      </div>
     </q-header>
     <q-drawer side="right" v-model="activityOpen" bordered :width="300" :breakpoint="599"
       :behavior="$q.screen.lt.md ? 'mobile' : 'desktop'" content-class="mb-drawer">
@@ -184,7 +188,7 @@
             </q-btn>
           </div>
           <div v-if="mediaLoading" class="filemanager-skeleton scroll"
-            :style="`height: ${(height || 400) - mainTimelineSize.height - 50 - 8 - (selected.length ? 44 : 0)}px;`">
+            :style="`height: ${(height || 400) - mainTimelineSize.height - 50 - 8 - noticeHeight - (selected.length ? 44 : 0)}px;`">
             <div v-if="fileviewtype === 'grid'" class="row">
               <div v-for="n in 12" :key="n" class="q-pa-xs col-xs-6 col-sm-4 col-md-3 col-lg-2 col-xl-2">
                 <q-skeleton square style="aspect-ratio:16/9; border-radius:6px" />
@@ -203,14 +207,14 @@
             </template>
           </div>
           <div v-else-if="!currentEvents.length" class="column flex-center text-grey-6"
-            :style="`height: ${(height || 400) - mainTimelineSize.height - 50 - 8 - (selected.length ? 44 : 0)}px;`">
+            :style="`height: ${(height || 400) - mainTimelineSize.height - 50 - 8 - noticeHeight - (selected.length ? 44 : 0)}px;`">
             <q-icon name="mdi-folder-multiple-image" size="64px" class="q-mb-md" style="opacity:.45" />
             <div class="text-subtitle1 text-grey-5">No media for {{ selectedDate }}</div>
             <div class="text-caption q-mt-xs text-grey-7">Pick another date, or request data from the device above</div>
           </div>
           <template v-else>
           <q-table :grid="fileviewtype === 'grid'" class="filemanager" selection="multiple" v-model:selected="selected"
-            :style="`height: ${(height || 400) - mainTimelineSize.height - 50 - 8 - (selected.length ? 44 : 0)}px;`" :rows="visibleEvents"
+            :style="`height: ${(height || 400) - mainTimelineSize.height - 50 - 8 - noticeHeight - (selected.length ? 44 : 0)}px;`" :rows="visibleEvents"
             :columns="columns" :visible-columns="visibleColumns" row-key="uuid" virtual-scroll v-model:pagination="pagination"
             :rows-per-page-options="[0]" dense card-container-class="content-start" @row-click="rowClick">
             <template v-slot:body-cell-preview="props">
@@ -393,6 +397,13 @@
       </div>
       <q-btn outline no-caps color="teal-4" icon="mdi-account-circle" label="Log in" class="q-mt-lg" @click="login" />
     </template>
+    <template v-else-if="deviceDeleted">
+      <q-icon name="mdi-delete-outline" size="56px" color="blue-grey-4" class="q-mb-md" />
+      <div class="text-subtitle1 text-grey-4">This device was deleted</div>
+      <div class="text-caption text-grey-6 q-mt-xs" style="max-width:360px">
+        Device #{{ $route.params.deviceid }} no longer exists. Pick another device.
+      </div>
+    </template>
     <template v-else-if="loadError">
       <q-icon name="mdi-alert-circle-outline" size="56px" color="red-4" class="q-mb-md" />
       <div class="text-subtitle1 text-grey-4">Couldn't load this device</div>
@@ -555,6 +566,8 @@ export default {
       media: store => store.media,
       events: store => Object.keys(store.media).map(e => e.replaceAll('-', '/')),
       currentEvents: store => store.currentEvents,
+      removedFile: store => store.removedFile,
+      deviceState: store => store.deviceState,
       timelines: store => store.timelines || [],
       commands: store => store.commands,
       connections: store => store.connections
@@ -666,6 +679,19 @@ export default {
     tachoEnabled () {
       return !!(this.cmdtacho && this.item && this.item.configuration && this.item.configuration.tacho)
     },
+    // device or its media storage blocked by flespi: new files won't arrive
+    blockNotice () {
+      const st = this.deviceState || {}
+      if (st.media_blocked) return `Media storage is blocked (code ${st.media_blocked}): new files are not accepted`
+      if (st.blocked) return `Device is blocked (code ${st.blocked}): check its limits in flespi`
+      return ''
+    },
+    noticeHeight () {
+      return this.blockNotice ? 32 : 0
+    },
+    deviceDeleted () {
+      return !!(this.deviceState && this.deviceState.deleted)
+    },
     viewerIndex () {
       if (!this.current || !this.currentEvents) return -1
       return this.currentEvents.findIndex(f => f.uuid === this.current.uuid)
@@ -680,7 +706,23 @@ export default {
     }
   },
   watch: {
-    currentEvents (val) {
+    // drop a file removed from storage from the selection and open views
+    removedFile (val) {
+      if (!val) return
+      const uuid = val.uuid
+      this.selected = this.selected.filter(f => f.uuid !== uuid)
+      this.tachoFiles = this.tachoFiles.filter(f => f.uuid !== uuid)
+      if (this.wallFile && this.wallFile.uuid === uuid) this.wallFile = null
+      if (this.current && !this.current.mediastream && this.current.uuid === uuid) {
+        this.current = undefined
+        this.showmedia = false
+      }
+    },
+    deviceDeleted (val) {
+      if (val) this.item = null
+    },
+    'deviceState.name' (val) {
+      if (this.item && typeof val === 'string') this.item.name = val
     },
     connected: function (val) {
       if (val) {
@@ -1378,6 +1420,12 @@ export default {
 // still too narrow to hold every button on one line
 .mb-commands-row
   width: 100%
+.mb-block-notice
+  height: 32px
+  font-size: 13px
+  color: #ffcdd2
+  background: rgba(198, 40, 40, .35)
+  border-top: 1px solid rgba(239, 83, 80, .4)
 .mb-action-wrap
   flex-wrap: wrap
   justify-content: center

@@ -150,6 +150,7 @@ export default defineComponent({
     connected (val) {
       if (val) {
         this.subscribePinnedDevices()
+        this.subscribeDevicesState()
       }
     },
     deviceId (val) {
@@ -170,6 +171,7 @@ export default defineComponent({
       this.getDevices()
       if (this.connected) {
         this.subscribePinnedDevices()
+        this.subscribeDevicesState()
       }
     }
     window.addEventListener('message', function (event) {
@@ -189,7 +191,7 @@ export default defineComponent({
   },
   methods: {
     ...mapActions(useAuthStore, ['setToken', 'init']),
-    ...mapActions(useMediaStore, ['getDevices', 'subscribePinnedDevices']),
+    ...mapActions(useMediaStore, ['getDevices', 'subscribePinnedDevices', 'subscribeDevicesState']),
     selectDevice (id) {
       this.deviceId = id
       if (this.$q.screen.lt.md) this.deviceDrawer = false

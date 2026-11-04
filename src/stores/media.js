@@ -2,6 +2,16 @@ import { defineStore } from 'pinia'
 import moment from 'moment'
 import { isAudioStream } from '../utils/media-url'
 
+// retained state payload -> value; empty payload (cleared) -> null
+function parseState (data) {
+  if (!data || !data.length) return null
+  try {
+    return JSON.parse(data)
+  } catch (e) {
+    return undefined
+  }
+}
+
 // how long the server keeps a stream's recording after it ended
 export const STREAM_KEEP_SEC = 600
 
@@ -13,12 +23,16 @@ export const useMediaStore = defineStore('media', {
     devices: {},
     topics: {
       pinnedDevices: 'xflespifront/pinned/devices',
+      devicesState: 'flespi/state/gw/devices/+/connected,media_size,name,deleted',
+      deviceState: 'flespi/state/gw/devices/{device_id}/blocked,media_blocked,name,deleted',
       connections: 'flespi/state/gw/devices/{device_id}/connections/+',
       commandslog: 'flespi/log/gw/devices/{device_id}/commands-queue/{cmds}/queued,sent,processed,canceled,expired',
       commandsqueue: 'flespi/state/gw/devices/{device_id}/commands-queue/+',
-      uploads: 'flespi/log/gw/devices/{device_id}/media_file_uploaded,media_file_updated'
+      uploads: 'flespi/log/gw/devices/{device_id}/media_file_uploaded,media_file_updated,media_file_deleted,media_file_expired'
     },
     connections: {},
+    // live state of the opened device: { blocked, media_blocked, name, deleted }
+    deviceState: {},
     // streams whose connection closed: uuid -> { ms, endedAt }; the server keeps them ~10 min
     endedStreams: {},
     commands: {},
@@ -35,6 +49,8 @@ export const useMediaStore = defineStore('media', {
     mediaDeviceTypes: {},
     timeline: {},
     realtimeList: [],
+    // last file removed from storage (here or elsewhere), so views can drop it
+    removedFile: null,
     cmds: ['request_video', 'take_photo', 'start_videostream', 'video_timeline', 'playback_video', 'request_tachograph_file', 'start_videostream_batch', 'playback_video_batch', 'start_audiostream'],
     recentCommandsLimit: 7
   }),
@@ -158,6 +174,47 @@ export const useMediaStore = defineStore('media', {
         // console.trace(this.topics.pinnedDevices.replace('{device_id}', newid))
       })
     },
+    // live fields of every device in the list
+    subscribeDevicesState () {
+      this.$connector.socket.unsubscribe(this.topics.devicesState)
+      this.$connector.socket.subscribe({
+        name: this.topics.devicesState,
+        handler: this.processDevicesState,
+        options: { qos: 1, nl: false, rap: false, rh: 0, properties: {} }
+      })
+    },
+    processDevicesState (data, topic) {
+      const parts = topic.split('/')
+      const id = parseInt(parts[parts.length - 2])
+      const field = parts[parts.length - 1]
+      const val = parseState(data)
+      const idx = this.deviceList.findIndex(d => d.id === id)
+      if (idx < 0) return
+      if (field === 'deleted') {
+        if (val) this.deviceList.splice(idx, 1)
+        return
+      }
+      if (val === undefined) return
+      this.deviceList[idx] = { ...this.deviceList[idx], [field]: val }
+    },
+    subscribeDeviceState (newid, oldid) {
+      if (oldid) {
+        this.$connector.socket.unsubscribe(this.topics.deviceState.replace('{device_id}', oldid))
+      }
+      this.deviceState = {}
+      if (newid) {
+        this.$connector.socket.subscribe({
+          name: this.topics.deviceState.replace('{device_id}', newid),
+          handler: this.processDeviceState,
+          options: { qos: 1, nl: false, rap: false, rh: 0, properties: {} }
+        })
+      }
+    },
+    processDeviceState (data, topic) {
+      const parts = topic.split('/')
+      if (parseInt(parts[parts.length - 2]) !== this.deviceId) return
+      this.deviceState = { ...this.deviceState, [parts[parts.length - 1]]: parseState(data) }
+    },
     processPinnedDevices (data, topic, packet) {
       try {
         if (data && data.toString()) {
@@ -214,17 +271,25 @@ export const useMediaStore = defineStore('media', {
         this.realtimeList = response.data.result.slice(-5).reverse()
       }
     },
+    // date is a hint; without it every day is searched
     deleteMedia (date, uuid) {
-      if (this.media[date]) {
-        const del = this.media[date].findIndex((element) => element.uuid === uuid)
+      const days = date && this.media[date] ? [date] : Object.keys(this.media)
+      for (const d of days) {
+        const del = this.media[d].findIndex((element) => element.uuid === uuid)
         if (del > -1) {
-          this.media[date].splice(del, 1)
+          this.media[d].splice(del, 1)
+          if (!this.media[d].length) delete this.media[d]
+          break
         }
       }
+      const rt = this.realtimeList.findIndex((element) => element.uuid === uuid)
+      if (rt > -1) this.realtimeList.splice(rt, 1)
+      this.removedFile = { uuid, at: Date.now() }
     },
     setDeviceId (id) {
       const oldid = this.deviceId
       this.deviceId = id
+      this.subscribeDeviceState(this.deviceId, oldid)
       this.subscribeConnections(this.deviceId, oldid)
       this.subscribeUploads(this.deviceId, oldid)
       this.subscribeCommands(this.deviceId, oldid)
@@ -382,11 +447,14 @@ export const useMediaStore = defineStore('media', {
     processRealtimeUpload (data, topic, packet) {
       // console.log({ data: JSON.parse(data), topic })
       topic = topic.split('/')
-      let update = false
-      if (topic[topic.length - 1] === 'media_file_updated') {
-        update = true
-      }
+      const action = topic[topic.length - 1]
+      const update = action === 'media_file_updated'
       const el = JSON.parse(data)
+      // removed via API, another client or by TTL/rotation
+      if (action === 'media_file_deleted' || action === 'media_file_expired') {
+        if (el && el.uuid) this.deleteMedia(el.created ? this.formatUnix(el.created).split(' ')[0] : null, el.uuid)
+        return
+      }
       let d = this.formatUnix(el.created)
       d = d.split(' ')
       const event = {
