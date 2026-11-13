@@ -34,7 +34,8 @@
           <CameraCell :channel="item" :segments="lanes[item]" :t="t" :playing="playing" :rate="rate"
             :focused="focused" :active="String(activeChannel) === String(item)" :audio-on="audioChannel === item"
             :pin="pinFor(item)"
-            @toggle-focus="toggleFocus" @toggle-audio="toggleAudio(item)" @clear-pin="pinnedFile = null" />
+            @toggle-focus="toggleFocus" @toggle-audio="toggleAudio(item)" @clear-pin="pinnedFile = null"
+            @buffering="on => onCellBuffering(item, on)" />
         </template>
       </WallGrid>
       <TrackMap v-if="showTrack" class="cw-track" :t="t" :track="track" :loading="trackLoading"
@@ -73,6 +74,8 @@ import CameraControls from './CameraControls.vue'
 
 // the map (with leaflet) loads only when the track is shown
 const TrackMap = defineAsyncComponent(() => import('../wall/TrackMap.vue'))
+// a cell buffering longer than this stops holding the wall (dead file, no network)
+const BUFFER_WAIT_MS = 15000
 
 export default defineComponent({
   name: 'CameraWall',
@@ -225,12 +228,24 @@ export default defineComponent({
     if (this.showTrack && !this.trackLoaded) this.fetchTrack()
     window.addEventListener('keydown', this.onKeydown)
   },
+  created () {
+    // channel -> setTimeout id while its video buffers
+    this.bufferingCells = {}
+  },
   beforeUnmount () {
+    Object.values(this.bufferingCells).forEach(clearTimeout)
     if (this.skipCheck) this.skipCheck.cancel()
     window.removeEventListener('keydown', this.onKeydown)
     this.dispose()
   },
   methods: {
+    // hold the clock while any cell buffers; give up on a cell stuck too long
+    onCellBuffering (ch, on) {
+      clearTimeout(this.bufferingCells[ch])
+      delete this.bufferingCells[ch]
+      if (on) this.bufferingCells[ch] = setTimeout(() => this.onCellBuffering(ch, false), BUFFER_WAIT_MS)
+      this.setHold(Object.keys(this.bufferingCells).length > 0)
+    },
     // the pinned file as a segment for its own channel; other cells get none
     pinFor (ch) {
       return this.pinnedChannel === String(ch) ? this.pinnedSeg : null
@@ -393,6 +408,17 @@ export default defineComponent({
   max-width: 560px
   min-width: 300px
   border-left: 1px solid rgba(255, 255, 255, .08)
+
+// tall narrow screen (phone in portrait): map goes under the video
+@media (max-aspect-ratio: 1/1)
+  .cw-body
+    flex-direction: column
+  .cw-track
+    flex: 0 0 35%
+    max-width: none
+    min-width: 0
+    border-left: 0
+    border-top: 1px solid rgba(255, 255, 255, .08)
 
 .cw-timeline
   flex: 0 0 auto

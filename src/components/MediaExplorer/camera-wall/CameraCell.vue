@@ -1,7 +1,7 @@
 <template>
   <div class="cc-cell" :class="{ 'cc-focused': focused, 'cc-active': active && !focused }">
     <MediaPlayer v-if="videoOptions" ref="player" :options="videoOptions"
-      @ready="onPlayerReady" class="cc-media bg-black" />
+      @ready="onPlayerReady" @buffering="setBuffering" class="cc-media bg-black" />
     <img v-else-if="imgSrc" :src="imgSrc" class="cc-media cc-img" />
     <div v-else class="cc-media cc-empty column flex-center">
       <q-icon name="mdi-timer-sand-empty" size="26px" style="opacity:.35" color="grey-7" />
@@ -55,14 +55,15 @@ export default defineComponent({
     // within its extent, whatever the lane resolved for that instant
     pin: { type: Object, default: null }
   },
-  emits: ['toggle-focus', 'toggle-audio', 'clear-pin'],
+  emits: ['toggle-focus', 'toggle-audio', 'clear-pin', 'buffering'],
   data () {
     return {
       videoOptions: null,
       imgSrc: null,
       currentUuid: null,
       currentSeg: null,
-      inGap: false
+      inGap: false,
+      buffering: false
     }
   },
   computed: {
@@ -110,6 +111,7 @@ export default defineComponent({
   },
   beforeUnmount () {
     if (this.syncThrottled) this.syncThrottled.cancel()
+    this.setBuffering(false)
   },
   methods: {
     // binary search the resolved lane for the segment containing time t
@@ -132,6 +134,7 @@ export default defineComponent({
         // gap / nothing to play: show a black screen (not the last frame of the
         // finished clip) and drop the media so its decoder is released
         this.inGap = true
+        this.setBuffering(false)
         this.videoOptions = null
         this.imgSrc = null
         this.currentUuid = null
@@ -140,6 +143,7 @@ export default defineComponent({
       }
       this.inGap = false
       if (seg.uuid !== this.currentUuid) {
+        this.setBuffering(false)
         this.currentUuid = seg.uuid
         this.currentSeg = seg
         if (seg.kind === 'video') {
@@ -163,7 +167,8 @@ export default defineComponent({
     },
     correctVideo (seg) {
       const p = this.$refs.player
-      if (!p || !p.isReady()) return
+      // the wall clock waits while we buffer; seeking now would only restart the load
+      if (!p || !p.isReady() || this.buffering) return
       const expected = this.t - seg.file.created
       if (Math.abs(p.getCurrentTime() - expected) > DRIFT) p.seek(Math.max(0, expected))
       p.setRate(this.rate)
@@ -174,6 +179,11 @@ export default defineComponent({
       if (!p || !p.isReady() || this.inGap) return
       if (this.playing && p.isPaused()) p.play()
       if (!this.playing && !p.isPaused()) p.pause()
+    },
+    setBuffering (on) {
+      if (this.buffering === on) return
+      this.buffering = on
+      this.$emit('buffering', on)
     },
     pauseVideo () {
       const p = this.$refs.player

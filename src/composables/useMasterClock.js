@@ -24,6 +24,8 @@ export function useMasterClock ({ dayStart, dayEnd }) {
   let anchorT = dayStart // t value at the moment we last (re)anchored
   let anchorPerf = 0 // performance.now() at that moment
   let raf = null
+  // held while a playing video buffers, so the wall waits instead of running ahead
+  let held = false
 
   const clamp = (v) => Math.min(Math.max(v, boundStart.value), boundEnd.value)
 
@@ -33,6 +35,11 @@ export function useMasterClock ({ dayStart, dayEnd }) {
   }
 
   function tick () {
+    if (held) {
+      reanchor()
+      raf = requestAnimationFrame(tick)
+      return
+    }
     const elapsed = (performance.now() - anchorPerf) / 1000
     const next = anchorT + elapsed * rate.value
     if (next >= boundEnd.value) {
@@ -79,6 +86,11 @@ export function useMasterClock ({ dayStart, dayEnd }) {
     reanchor()
   }
 
+  function setHold (on) {
+    held = !!on
+    reanchor()
+  }
+
   function setRate (r) {
     rate.value = r
     reanchor() // keep t continuous across the rate change
@@ -118,6 +130,7 @@ export function useMasterClock ({ dayStart, dayEnd }) {
     toggle,
     seek,
     setRate,
+    setHold,
     setRange,
     resetRange,
     dispose

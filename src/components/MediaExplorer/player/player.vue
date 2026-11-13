@@ -127,7 +127,7 @@ function isWebrtcSource (options) {
 export default {
   name: 'VideoPlayer',
   components: { WebrtcPlayer },
-  emits: ['ready'],
+  emits: ['ready', 'buffering'],
   props: {
     options: {
       type: Object,
@@ -181,6 +181,9 @@ export default {
       const opts = { fill: true, ...buildOptions(this.options) }
       this.player = videojs(el, opts, () => {
         this.player.log('onPlayerReady', this)
+        // starving for data (seek, slow network) vs. frames flowing again
+        this.player.on('waiting', () => this.$emit('buffering', true))
+        this.player.on(['playing', 'canplay', 'error', 'emptied'], () => this.$emit('buffering', false))
         this.$emit('ready')
         if (!isLiveSource(this.options)) return
         // FLV here is always a live stream -> follow the live edge by default.

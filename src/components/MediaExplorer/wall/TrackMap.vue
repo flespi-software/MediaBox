@@ -97,6 +97,9 @@ export default defineComponent({
     // a manual pan hands control back to the user (stop auto-following)
     this.map.on('dragstart', () => { this.follow = false })
     this.$nextTick(() => this.map.invalidateSize())
+    // the box changes size on rotation / layout switch; leaflet must re-measure
+    this.resizeObs = new ResizeObserver(() => { if (this.map) this.map.invalidateSize() })
+    this.resizeObs.observe(this.$refs.map)
     if (this.live) {
       this.updateLiveMarker()
     } else {
@@ -105,6 +108,7 @@ export default defineComponent({
     }
   },
   beforeUnmount () {
+    if (this.resizeObs) this.resizeObs.disconnect()
     if (this.map) {
       this.map.remove()
       this.map = null

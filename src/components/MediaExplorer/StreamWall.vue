@@ -118,4 +118,15 @@ export default defineComponent({
   max-width: 560px
   min-width: 300px
   border-left: 1px solid rgba(255, 255, 255, .08)
+
+// tall narrow screen (phone in portrait): map goes under the video
+@media (max-aspect-ratio: 1/1)
+  .sw-body
+    flex-direction: column
+  .sw-track
+    flex: 0 0 35%
+    max-width: none
+    min-width: 0
+    border-left: 0
+    border-top: 1px solid rgba(255, 255, 255, .08)
 </style>
